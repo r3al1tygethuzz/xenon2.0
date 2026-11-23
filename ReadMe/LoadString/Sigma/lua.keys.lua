@@ -69,7 +69,7 @@ sendLog(
 local KEYS_URL =
     "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"
 local MAIN_URL =
-    "https://pastebin.com/raw/rUeSAvYg"
+    "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"
 --//==================================================
 --// PREVENT DUPLICATE GUIs
 --//==================================================
