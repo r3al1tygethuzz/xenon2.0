@@ -14,14 +14,83 @@ local clientId = RbxAnalyticsService:GetClientId() -- Used as HWID
 local userId = tostring(LocalPlayer.UserId)
 local username = LocalPlayer.Name
 --//==================================================
---// FUNCTION TO SEND LOG TO DISCORD
+--// BANNED HWIDs
 --//==================================================
-local function sendLog(message)
-    print("[KeySystem Log] Attempting to send: " .. message)
-    local data = {
-        content = message
+local BANNED_HWIDS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/bannedHWIDs.lua"
+
+local function loadBannedHWIDs()
+    local success, result = pcall(function()
+        local source = game:HttpGet(BANNED_HWIDS_URL)
+        if not source or source == "" then
+            error("Banned HWID list returned empty.")
+        end
+        local loaded = loadstring(source)
+        if not loaded then
+            error("Could not compile bannedHWIDs.lua.")
+        end
+        return loaded()
+    end)
+
+    if not success then
+        warn("[KeySystem] Failed to load banned HWIDs:", result)
+        return nil
+    end
+
+    if type(result) ~= "table" then
+        warn("[KeySystem] bannedHWIDs.lua did not return a table.")
+        return nil
+    end
+
+    return result
+end
+
+local function isHWIDBanned(hwid)
+    local banned = loadBannedHWIDs()
+    if not banned then
+        return false, nil
+    end
+
+    -- Dictionary format: { ["hwid"] = "reason" } or { ["hwid"] = true }
+    local entry = banned[hwid]
+    if entry ~= nil then
+        if type(entry) == "string" and entry ~= "" then
+            return true, entry
+        end
+        return true, "Your hardware ID has been permanently banned."
+    end
+
+    -- List format fallback: { "hwid1", "hwid2", ... }
+    for _, v in pairs(banned) do
+        if tostring(v) == tostring(hwid) then
+            return true, "Your hardware ID has been permanently banned."
+        end
+    end
+
+    return false, nil
+end
+--//==================================================
+--// EMBED LOGGING
+--//==================================================
+local function sendLog(title, description, color, fields)
+    color = color or 5793266 -- default blurple
+
+    local embed = {
+        title = title,
+        description = description,
+        color = color,
+        fields = fields or {},
+        footer = {
+            text = "Key System • " .. os.date("%Y-%m-%d %H:%M:%S")
+        },
+        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
     }
+
+    local data = {
+        embeds = { embed }
+    }
+
     local jsonData = HttpService:JSONEncode(data)
+
     local success, err = pcall(function()
         local req = (syn and syn.request) or (http and http.request) or http_request or request
         if req then
@@ -44,32 +113,55 @@ local function sendLog(message)
             )
         end
     end)
+
     if not success then
-        warn(
-            "[KeySystem] Failed to send log to Discord: "
-                .. tostring(err)
-        )
+        warn("[KeySystem] Failed to send embed log:", tostring(err))
     end
 end
 --//==================================================
---// LOG SCRIPT EXECUTION
+--// EARLY BAN CHECK + KICK
 --//==================================================
-sendLog(
-    "Script executed: User "
-        .. username
-        .. " (ID: "
-        .. userId
-        .. ", HWID: "
-        .. clientId
-        .. ")"
-)
+do
+    local banned, reason = isHWIDBanned(clientId)
+    if banned then
+        local banReason = reason or "Your hardware ID has been permanently banned."
+
+        sendLog(
+            "⛔ BANNED HWID",
+            "A banned hardware ID tried to run the script.",
+            15158332, -- red
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Ban Reason", value = banReason, inline = false }
+            }
+        )
+
+        -- Kick immediately with the reason
+        LocalPlayer:Kick("Banned\n\nReason: " .. banReason)
+        return -- stop the rest of the script
+    end
+
+    -- Normal execution log
+    sendLog(
+        "▶ Script Executed",
+        "Key system was loaded.",
+        5793266,
+        {
+            { name = "Username", value = username, inline = true },
+            { name = "User ID", value = userId, inline = true },
+            { name = "HWID", value = "```" .. clientId .. "```", inline = false }
+        }
+    )
+end
 --//==================================================
 --// URLs
 --//==================================================
 local KEYS_URL =
     "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"
 local MAIN_URL =
-    "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"
+    "https://pastebin.com/raw/ge9N9rbV"
 --//==================================================
 --// PREVENT DUPLICATE GUIs
 --//==================================================
@@ -115,101 +207,153 @@ end
 --// VERIFY KEY
 --//==================================================
 local function verifyKey(inputKey)
+    -- Ban check (safety net)
+    local banned, banReason = isHWIDBanned(clientId)
+    if banned then
+        local reason = banReason or "Your hardware ID has been permanently banned."
+
+        sendLog(
+            "⛔ BANNED HWID (Key Attempt)",
+            "Banned hardware tried to verify a key.",
+            15158332,
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Ban Reason", value = reason, inline = false }
+            }
+        )
+
+        LocalPlayer:Kick("Banned\n\nReason: " .. reason)
+        return false, "Banned: " .. reason
+    end
+
     inputKey = tostring(inputKey or "")
     inputKey = inputKey:gsub("^%s+", "")
     inputKey = inputKey:gsub("%s+$", "")
     if inputKey == "" then
         return false, "Please enter a key."
     end
+
     local keys, errorMessage = loadKeys()
     if not keys then
         return false, "Could not load key server."
     end
+
     -- Check User ID first
     local account = keys[userId]
     -- Then check username
     if not account then
         account = keys[username]
     end
+
     if not account then
         sendLog(
-            "Attempt: User "
-                .. username
-                .. " (ID: "
-                .. userId
-                .. ", HWID: "
-                .. clientId
-                .. ") - No key registered."
+            "❌ No Key Registered",
+            "User has no key assigned.",
+            15105570, -- orange
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false }
+            }
         )
-        return false,
-            "No key is registered to this account."
+        return false, "No key is registered to this account."
     end
-    --//==================================================
-    --// VALIDATE DATABASE ENTRY
-    --//==================================================
+
     if type(account) ~= "table" then
         sendLog(
-            "Attempt: User "
-                .. username
-                .. " (ID: "
-                .. userId
-                .. ", HWID: "
-                .. clientId
-                .. ") - Invalid key database entry."
+            "⚠️ Invalid Database Entry",
+            "Key database entry is malformed.",
+            15105570,
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false }
+            }
         )
-        return false,
-            "Invalid key database entry."
+        return false, "Invalid key database entry."
     end
-    --//==================================================
-    --// KEY CHECK
-    --//==================================================
+
+    -- Key check
     if tostring(account.key) ~= inputKey then
         sendLog(
-            "Attempt: User "
-                .. username
-                .. " (ID: "
-                .. userId
-                .. ", HWID: "
-                .. clientId
-                .. ") - Invalid key."
+            "❌ Invalid Key",
+            "Wrong key entered.",
+            15158332,
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Entered Key", value = "||" .. inputKey .. "||", inline = false }
+            }
         )
         return false, "Invalid key."
     end
-    --//==================================================
-    --// EXPIRATION
-    --//==================================================
-    local expires =
-        tonumber(account.expires) or 0
+
+    -- Expiration
+    local expires = tonumber(account.expires) or 0
     if expires ~= 0 then
         local currentTime = os.time()
         if currentTime >= expires then
             sendLog(
-                "Attempt: User "
-                    .. username
-                    .. " (ID: "
-                    .. userId
-                    .. ", HWID: "
-                    .. clientId
-                    .. ") - Key expired."
+                "⏰ Key Expired",
+                "User tried to use an expired key.",
+                15105570,
+                {
+                    { name = "Username", value = username, inline = true },
+                    { name = "User ID", value = userId, inline = true },
+                    { name = "HWID", value = "```" .. clientId .. "```", inline = false }
+                }
             )
-            return false,
-                "This key has expired."
+            return false, "This key has expired."
         end
     end
+
     --//==================================================
-    --// SUCCESS
+    --// SUSPICIOUS ACTIVITY / MULTI-HWID CHECK
     --//==================================================
+    local suspicious = false
+    local suspiciousReason = nil
+
+    if account.hwid and account.hwid ~= "" and tostring(account.hwid) ~= tostring(clientId) then
+        suspicious = true
+        suspiciousReason = "Key is locked to a different HWID"
+    end
+
+    if suspicious then
+        sendLog(
+            "🚨 SUSPICIOUS ACTIVITY",
+            "Possible key sharing / multi-HWID usage detected.",
+            16711680, -- bright red
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Expected HWID", value = "```" .. tostring(account.hwid) .. "```", inline = false },
+                { name = "Key Used", value = "||" .. inputKey .. "||", inline = false },
+                { name = "Reason", value = suspiciousReason, inline = false }
+            }
+        )
+        -- You can choose to block them here if you want:
+        -- return false, "This key is locked to another device."
+    end
+
+    -- Success log (always)
     sendLog(
-        "Success: User "
-            .. username
-            .. " (ID: "
-            .. userId
-            .. ", HWID: "
-            .. clientId
-            .. ") - Key verified."
+        "✅ Key Verified",
+        suspicious and "Key accepted but flagged as suspicious." or "Key verified successfully.",
+        suspicious and 16776960 or 5763719, -- yellow if suspicious, green if clean
+        {
+            { name = "Username", value = username, inline = true },
+            { name = "User ID", value = userId, inline = true },
+            { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+            { name = "Key", value = "||" .. inputKey .. "||", inline = false },
+            { name = "Suspicious", value = suspicious and ("Yes – " .. suspiciousReason) or "No", inline = false }
+        }
     )
-    return true,
-        "Key verified successfully!"
+
+    return true, "Key verified successfully!"
 end
 --//==================================================
 --// GUI
