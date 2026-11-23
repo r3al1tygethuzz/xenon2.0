@@ -1,7 +1,4 @@
-local banned = [
-  HWID = (hwid here)
-  ,
-  HWID = (hwid here)
-]
-
-return banned
+return {
+    ["exact-hwid-string-here"] = "Caught sharing key / multi accounting",
+    ["another-hwid"] = "Exploiting / ban evasion",
+}
