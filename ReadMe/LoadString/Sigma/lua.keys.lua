@@ -140,7 +140,7 @@ end
 --// URLs (updated)
 --//==================================================
 local KEYS_URL = "https://raw.githubusercontent.com/r3alitygethuzz/hard-time/main/keys.lua"
-local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"
+local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/notched.lua"
 
 --//==================================================
 --// LOAD MAIN SCRIPT (shared)
