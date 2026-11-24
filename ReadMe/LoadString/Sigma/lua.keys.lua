@@ -142,7 +142,7 @@ end
 --// URLs  (FIXED)
 --//==================================================
 local KEYS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"  -- correct one (with the 1)
-local MAIN_URL = "https://pastebin.com/raw/ge9N9rbV"  -- ⚠ this paste is currently 404 – replace it
+local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"  -- ⚠ this paste is currently 404 – replace it
 
 --//==================================================
 --// LOAD MAIN SCRIPT
