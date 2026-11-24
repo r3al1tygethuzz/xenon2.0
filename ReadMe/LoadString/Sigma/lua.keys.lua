@@ -1,5 +1,5 @@
 --//==================================================
---// KEY SYSTEM
+--// KEY SYSTEM (FULL FIXED)
 --//==================================================
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -10,7 +10,6 @@ local LocalPlayer = Players.LocalPlayer
 --//==================================================
 --// WEBHOOK + IDENTITY
 --//==================================================
--- ⚠ REPLACE THIS with a new webhook URL (current one is deleted / invalid)
 local webhookUrl = "https://discord.com/api/webhooks/1574562434474184897/e0VGzrjhme8uV0dSVFu8rNWZ6KE6R-akRsqT0GqnFGBJ0FhcPV0BBxODYv9DcdIL_ZEJ"
 
 local clientId = RbxAnalyticsService:GetClientId()
@@ -25,8 +24,12 @@ local BANNED_HWIDS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon
 local function loadBannedHWIDs()
     local success, result = pcall(function()
         local source = game:HttpGet(BANNED_HWIDS_URL)
-        if not source or source == "" or source:find("404: Not Found") then
-            error("Banned HWID list returned empty or 404.")
+        if not source or source == "" then
+            error("Banned HWID list returned empty.")
+        end
+        local start = source:sub(1, 80)
+        if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
+            error("Banned HWID list returned 404.")
         end
         local loaded = loadstring(source)
         if not loaded then
@@ -139,10 +142,10 @@ do
 end
 
 --//==================================================
---// URLs  (FIXED)
+--// URLs
 --//==================================================
-local KEYS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"  -- correct one (with the 1)
-local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"  -- ⚠ this paste is currently 404 – replace it
+local KEYS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"
+local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"
 
 --//==================================================
 --// LOAD MAIN SCRIPT
@@ -150,9 +153,17 @@ local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs
 local function loadMainScript()
     local success, result = pcall(function()
         local source = game:HttpGet(MAIN_URL)
-        if not source or source == "" or source:find("404") or source:find("Not Found") then
-            error("Main script returned empty or 404. Check MAIN_URL.")
+
+        if not source or source == "" then
+            error("Main script returned empty response.")
         end
+
+        -- Only treat as real 404 if it looks like GitHub's 404 page
+        local start = source:sub(1, 80)
+        if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
+            error("Main script URL returned 404. Check MAIN_URL.")
+        end
+
         local mainFunction = loadstring(source)
         if not mainFunction then
             error("Could not compile main script.")
@@ -215,13 +226,15 @@ local function loadKeys()
         if not source or source == "" then
             error("GitHub returned an empty file.")
         end
-        -- Detect GitHub 404 page
-        if source:find("404: Not Found") or source:find("<!DOCTYPE html>") then
+
+        local start = source:sub(1, 80)
+        if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
             error("keys.lua URL returned 404. Check the GitHub link.")
         end
+
         local loaded = loadstring(source)
         if not loaded then
-            error("Could not compile keys.lua (invalid Lua or 404 page).")
+            error("Could not compile keys.lua (invalid Lua).")
         end
         return loaded()
     end)
@@ -330,7 +343,7 @@ local function verifyKey(inputKey)
         return false, "This key has expired."
     end
 
-    -- Multi-HWID check
+    -- Multi-HWID / suspicious check
     local suspicious = false
     local suspiciousReason = nil
 
@@ -353,6 +366,8 @@ local function verifyKey(inputKey)
                 { name = "Reason", value = suspiciousReason, inline = false }
             }
         )
+        -- Uncomment the next line if you want to hard-block shared keys:
+        -- return false, "This key is locked to another device."
     end
 
     sendLog(
