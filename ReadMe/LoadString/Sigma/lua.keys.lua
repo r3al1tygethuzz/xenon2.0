@@ -10,7 +10,9 @@ local LocalPlayer = Players.LocalPlayer
 --//==================================================
 --// WEBHOOK + IDENTITY
 --//==================================================
+-- ⚠ REPLACE THIS with a new webhook URL (current one is deleted / invalid)
 local webhookUrl = "https://discord.com/api/webhooks/1542668082231902409/7yLhMRwWHRq3-6laQ9b8p4xPmQBO8bQUCoD3oKH8HYzHR7XmcdUh6gUkJs8nZTp132Dj"
+
 local clientId = RbxAnalyticsService:GetClientId()
 local userId = tostring(LocalPlayer.UserId)
 local username = LocalPlayer.Name
@@ -23,8 +25,8 @@ local BANNED_HWIDS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon
 local function loadBannedHWIDs()
     local success, result = pcall(function()
         local source = game:HttpGet(BANNED_HWIDS_URL)
-        if not source or source == "" then
-            error("Banned HWID list returned empty.")
+        if not source or source == "" or source:find("404: Not Found") then
+            error("Banned HWID list returned empty or 404.")
         end
         local loaded = loadstring(source)
         if not loaded then
@@ -137,19 +139,19 @@ do
 end
 
 --//==================================================
---// URLs (updated)
+--// URLs  (FIXED)
 --//==================================================
-local KEYS_URL = "https://raw.githubusercontent.com/r3alitygethuzz/hard-time/main/keys.lua"
-local MAIN_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/sigma.fart.lua"
+local KEYS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"  -- correct one (with the 1)
+local MAIN_URL = "https://pastebin.com/raw/ge9W9rbV"  -- ⚠ this paste is currently 404 – replace it
 
 --//==================================================
---// LOAD MAIN SCRIPT (shared)
+--// LOAD MAIN SCRIPT
 --//==================================================
 local function loadMainScript()
     local success, result = pcall(function()
         local source = game:HttpGet(MAIN_URL)
-        if not source or source == "" then
-            error("Main script returned an empty response.")
+        if not source or source == "" or source:find("404") or source:find("Not Found") then
+            error("Main script returned empty or 404. Check MAIN_URL.")
         end
         local mainFunction = loadstring(source)
         if not mainFunction then
@@ -176,13 +178,12 @@ end
 --// ALREADY VERIFIED THIS SESSION → SKIP UI
 --//==================================================
 if getgenv().XenonKeyVerified == true then
-    -- Already passed the key check earlier in this session
     loadMainScript()
     return
 end
 
 --//==================================================
---// LOG SCRIPT EXECUTION (only when UI will show)
+--// LOG SCRIPT EXECUTION
 --//==================================================
 sendLog(
     "▶ Script Executed",
@@ -214,12 +215,17 @@ local function loadKeys()
         if not source or source == "" then
             error("GitHub returned an empty file.")
         end
+        -- Detect GitHub 404 page
+        if source:find("404: Not Found") or source:find("<!DOCTYPE html>") then
+            error("keys.lua URL returned 404. Check the GitHub link.")
+        end
         local loaded = loadstring(source)
         if not loaded then
-            error("Could not compile keys.lua.")
+            error("Could not compile keys.lua (invalid Lua or 404 page).")
         end
         return loaded()
     end)
+
     if not success then
         warn("[KeySystem] Failed to load keys.lua:", result)
         return nil, tostring(result)
@@ -324,7 +330,7 @@ local function verifyKey(inputKey)
         return false, "This key has expired."
     end
 
-    -- Multi-HWID / suspicious check
+    -- Multi-HWID check
     local suspicious = false
     local suspiciousReason = nil
 
@@ -347,8 +353,6 @@ local function verifyKey(inputKey)
                 { name = "Reason", value = suspiciousReason, inline = false }
             }
         )
-        -- Uncomment the next line if you want to hard-block instead of just flagging:
-        -- return false, "This key is locked to another device."
     end
 
     sendLog(
@@ -672,13 +676,11 @@ local function performVerification()
     verifyButton.Text = "Verified"
     verifyButton.BackgroundColor3 = Color3.fromRGB(50, 105, 75)
 
-    -- Mark as verified for the rest of this session
     getgenv().XenonKeyVerified = true
 
     task.wait(0.7)
     gui:Destroy()
 
-    -- Load the actual script
     loadMainScript()
 end
 
