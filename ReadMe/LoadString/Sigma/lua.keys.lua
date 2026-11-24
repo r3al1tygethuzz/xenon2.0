@@ -11,7 +11,7 @@ local LocalPlayer = Players.LocalPlayer
 --// WEBHOOK + IDENTITY
 --//==================================================
 -- ⚠ REPLACE THIS with a new webhook URL (current one is deleted / invalid)
-local webhookUrl = "https://discord.com/api/webhooks/1542668082231902409/7yLhMRwWHRq3-6laQ9b8p4xPmQBO8bQUCoD3oKH8HYzHR7XmcdUh6gUkJs8nZTp132Dj"
+local webhookUrl = "https://discord.com/api/webhooks/1574562434474184897/e0VGzrjhme8uV0dSVFu8rNWZ6KE6R-akRsqT0GqnFGBJ0FhcPV0BBxODYv9DcdIL_ZEJ"
 
 local clientId = RbxAnalyticsService:GetClientId()
 local userId = tostring(LocalPlayer.UserId)
@@ -142,7 +142,7 @@ end
 --// URLs  (FIXED)
 --//==================================================
 local KEYS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/hard-time/main/keys.lua"  -- correct one (with the 1)
-local MAIN_URL = "https://pastebin.com/raw/ge9W9rbV"  -- ⚠ this paste is currently 404 – replace it
+local MAIN_URL = "https://pastebin.com/raw/ge9N9rbV"  -- ⚠ this paste is currently 404 – replace it
 
 --//==================================================
 --// LOAD MAIN SCRIPT
