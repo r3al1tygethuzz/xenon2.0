@@ -23,6 +23,7 @@ local FLY_SPEED = 24
 local AIM_SMOOTH = 0.15
 local HBE_SIZE = 8
 local AIM_FOV = 250
+local FIRE_MULTIPLIER = 1.0   -- scales all gun cooldowns (0.5 = 2x speed)
 
 local cfg = {
     fly     = false,
@@ -31,8 +32,14 @@ local cfg = {
     esp     = false,
     aura    = false,
     killAll = false,
-        fovRing = false,
+    fovRing = false,
     auraRequireGun = true,
+}
+
+local AIM = {
+    part = "Head",       -- "Head" / "Torso" / "Nearest"
+    smooth = 0.15,       -- lerp factor
+    fov = 250,           -- pixel radius
 }
 
 local AURA = {
@@ -42,6 +49,54 @@ local AURA = {
     requireGun = true,
     killAllInterval = 0.25,
 }
+
+-- ============================================================
+-- GUN CONFIG HOOK (super fast fire)
+-- ============================================================
+local GunConfigs = nil
+pcall(function()
+    GunConfigs = require(ReplicatedStorage:WaitForChild("GunConfigs", 10))
+end)
+
+-- original cooldowns, for reset
+local ORIGINAL_COOLDOWNS = {}
+local GUN_LIST = {
+    "Glock", "Deagle", "Spaz", "AA12", "Revolver", "Sawed-Off", "Sniper",
+    "Uzi", "Tec-9", "LMG", "AK47", "Tommy", "Assault Rifle", "Silencer",
+    "Draco", "Firework Launcher",
+}
+
+-- per-gun fast cooldown targets
+local GUN_COOLDOWNS = {
+    Glock = 0.03, Deagle = 0.05, Spaz = 0.03, AA12 = 0.01,
+    Revolver = 0.03, ["Sawed-Off"] = 0.03, Sniper = 0.05,
+    Uzi = 0.02, ["Tec-9"] = 0.02, LMG = 0.03, AK47 = 0.03,
+    Tommy = 0.02, ["Assault Rifle"] = 0.03, Silencer = 0.03,
+    Draco = 0.03, ["Firework Launcher"] = 0.15,
+}
+
+if GunConfigs then
+    for name, _ in pairs(GunConfigs) do
+        if type(GunConfigs[name]) == "table" and GunConfigs[name].CoolDown then
+            ORIGINAL_COOLDOWNS[name] = GunConfigs[name].CoolDown
+        end
+    end
+end
+
+local function applyCooldown(gunName)
+    if not GunConfigs or not GunConfigs[gunName] then return end
+    local target = GUN_COOLDOWNS[gunName] or ORIGINAL_COOLDOWNS[gunName] or 0.1
+    GunConfigs[gunName].CoolDown = target * FIRE_MULTIPLIER
+end
+
+local function applyAllCooldowns()
+    if not GunConfigs then return end
+    for name, _ in pairs(GUN_COOLDOWNS) do
+        applyCooldown(name)
+    end
+end
+
+applyAllCooldowns()
 
 local WHITELIST = {}
 local function isWhitelisted(plr) return WHITELIST[plr.UserId] == true end
@@ -181,17 +236,39 @@ end
 local aimConn
 local function findAimTarget()
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
-    local best, bestDist = nil, AIM_FOV
+    local best, bestDist = nil, AIM.fov
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= localPlayer and not isWhitelisted(p) then
             local char = p.Character
-            local head = char and (char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart"))
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if head and hum and hum.Health > 0 then
-                local sp, onScreen = Camera:WorldToViewportPoint(head.Position)
-                if onScreen then
-                    local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-                    if d < bestDist then bestDist = d; best = head end
+            if char then
+                local part
+                if AIM.part == "Head" then
+                    part = char:FindFirstChild("Head")
+                elseif AIM.part == "Torso" then
+                    part = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart")
+                else
+                    -- Nearest: pick the closest visible limb by screen distance
+                    for _, name in ipairs({"Head", "UpperTorso", "Torso", "HumanoidRootPart", "LowerTorso"}) do
+                        local c = char:FindFirstChild(name)
+                        if c then
+                            local sp, on = Camera:WorldToViewportPoint(c.Position)
+                            if on then
+                                local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                                if d < bestDist then bestDist = d; best = c end
+                            end
+                        end
+                    end
+                    part = nil
+                end
+                if part then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+                        if onScreen then
+                            local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                            if d < bestDist then bestDist = d; best = part end
+                        end
+                    end
                 end
             end
         end
@@ -200,12 +277,13 @@ local function findAimTarget()
 end
 
 local function startAim()
+    if aimConn then return end
     aimConn = RunService.RenderStepped:Connect(function()
         if not cfg.aimlock then return end
         local target = findAimTarget()
         if target then
             local goal = CFrame.new(Camera.CFrame.Position, target.Position)
-            Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - AIM_SMOOTH)
+            Camera.CFrame = Camera.CFrame:Lerp(goal, 1 - AIM.smooth)
         end
     end)
 end
@@ -214,17 +292,16 @@ local function stopAim()
 end
 
 -- ============================================================
--- ESP — Highlight-based (the BoxHandleAdornment wasn't rendering)
+-- ESP
 -- ============================================================
 local espFolder = Instance.new("Folder")
 espFolder.Name = "FlyAimESP"
 espFolder.Parent = Workspace
-local espTracked = {}          -- [player] = { hl, billboard, label }
+local espTracked = {}
 local espConns = {}
 
 local function createESP(plr)
     if plr == localPlayer or espTracked[plr] then return end
-
     local hl = Instance.new("Highlight")
     hl.Name = "ESP_HL_" .. plr.UserId
     hl.FillColor = Color3.fromRGB(62, 232, 122)
@@ -268,11 +345,9 @@ end
 local function startESP()
     for _, c in ipairs(espConns) do pcall(function() c:Disconnect() end) end
     espConns = {}
-
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= localPlayer then createESP(p) end
     end
-
     table.insert(espConns, Players.PlayerAdded:Connect(createESP))
     table.insert(espConns, Players.PlayerRemoving:Connect(removeESP))
 
@@ -288,10 +363,8 @@ local function startESP()
         local now = tick()
         if now - lastUpdate < 0.05 then return end
         lastUpdate = now
-
         local myRoot = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
         local myPos = myRoot and myRoot.Position
-
         for plr, d in pairs(espTracked) do
             local char = plr.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -301,7 +374,6 @@ local function startESP()
                 d.hl.Enabled = true
                 d.billboard.Adornee = char:FindFirstChild("Head") or root
                 d.billboard.Enabled = true
-
                 local dist = myPos and math.floor((root.Position - myPos).Magnitude) or 0
                 d.label.Text = string.format("%s [%d m]", plr.Name, dist)
             else
@@ -321,7 +393,7 @@ local function stopESP()
 end
 
 -- ============================================================
--- FOV RING + RED AURA HIGHLIGHTS
+-- FOV RING + AURA HIGHLIGHTS
 -- ============================================================
 local fovGui = Instance.new("ScreenGui")
 fovGui.Name = "AuraFOVRing"
@@ -337,22 +409,19 @@ fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
 fovCircle.BackgroundTransparency = 1
 fovCircle.Visible = false
 fovCircle.Parent = fovGui
-
 local fovStroke = Instance.new("UIStroke")
 fovStroke.Color = Color3.fromRGB(255, 60, 60)
 fovStroke.Thickness = 2
 fovStroke.Transparency = 0.25
 fovStroke.Parent = fovCircle
-
 local fovCorner = Instance.new("UICorner")
 fovCorner.CornerRadius = UDim.new(1, 0)
 fovCorner.Parent = fovCircle
 
--- red aura highlight pool
 local auraFolder = Instance.new("Folder")
 auraFolder.Name = "AuraRedHL"
 auraFolder.Parent = Workspace
-local auraHighlights = {}   -- [player] = Highlight
+local auraHighlights = {}
 
 local function ensureAuraHL(plr)
     if auraHighlights[plr] then return auraHighlights[plr] end
@@ -374,25 +443,20 @@ local function updateFOVRing()
         fovCircle.Visible = false
         return
     end
-    -- project the aura world radius to screen space
     local center = Camera.ViewportSize / 2
     local worldPoint = Camera.CFrame.Position + (Camera.CFrame.RightVector * AURA.radius)
-    local screenPoint, onScreen = Camera:WorldToViewportPoint(worldPoint)
+    local screenPoint = Camera:WorldToViewportPoint(worldPoint)
     local pixelRadius = math.abs(screenPoint.X - center.X)
-
     if pixelRadius < 4 then pixelRadius = 4 end
     fovCircle.Visible = true
     fovCircle.Size = UDim2.fromOffset(pixelRadius * 2, pixelRadius * 2)
 end
 
--- aura loop updates highlights + fires
 task.spawn(function()
     local lastFire, lastKillAllFire = 0, 0
     while true do
         task.wait(0.05)
-
         updateFOVRing()
-
         local myPos = getMyPos()
         if myPos then
             for _, p in ipairs(Players:GetPlayers()) do
@@ -403,15 +467,12 @@ task.spawn(function()
                     if root and hum and hum.Health > 0 then
                         local inRange = (myPos - root.Position).Magnitude <= AURA.radius
                         if inRange and (cfg.aura or cfg.killAll) then
-                            hl.Adornee = p.Character
-                            hl.Enabled = true
+                            hl.Adornee = p.Character; hl.Enabled = true
                         else
-                            hl.Adornee = nil
-                            hl.Enabled = false
+                            hl.Adornee = nil; hl.Enabled = false
                         end
                     else
-                        hl.Adornee = nil
-                        hl.Enabled = false
+                        hl.Adornee = nil; hl.Enabled = false
                     end
                 elseif isWhitelisted(p) then
                     local hl = auraHighlights[p]
@@ -420,7 +481,6 @@ task.spawn(function()
             end
         end
 
-        -- aura firing
         if cfg.aura and (not AURA.requireGun or isHoldingGun()) then
             local now = tick()
             if (now - lastFire) >= AURA.interval then
@@ -439,7 +499,6 @@ task.spawn(function()
             end
         end
 
-        -- kill-all firing
         if cfg.killAll and (not AURA.requireGun or isHoldingGun()) then
             local now = tick()
             if (now - lastKillAllFire) >= AURA.killAllInterval then
@@ -475,13 +534,13 @@ local function tpToPlayer(plr)
 end
 
 -- ============================================================
--- UI — bigger panel + tabs
+-- UI
 -- ============================================================
 local THEME = {
     Bg        = Color3.fromRGB(15,15,15),
     Panel     = Color3.fromRGB(26,26,26),
     PanelAlt  = Color3.fromRGB(32,32,32),
-        Green     = Color3.fromRGB(255,55,65),
+    Green     = Color3.fromRGB(255,55,65),
     GreenDark = Color3.fromRGB(125,25,32),
     Text      = Color3.fromRGB(230,235,230),
     TextDim   = Color3.fromRGB(120,130,120),
@@ -498,8 +557,8 @@ pcall(function() gui.Parent = CoreGui end)
 if not gui.Parent then gui.Parent = localPlayer:WaitForChild("PlayerGui") end
 
 local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 420, 0, 640)
-main.Position = UDim2.new(0.5, -210, 0.5, -320)
+main.Size = UDim2.new(0, 460, 0, 640)
+main.Position = UDim2.new(0.5, -230, 0.5, -320)
 main.BackgroundColor3 = THEME.Bg
 main.BorderSizePixel = 0
 main.Active = true
@@ -519,88 +578,6 @@ title.TextSize = 16
 title.Font = Enum.Font.GothamBold
 title.Parent = main
 local tc = Instance.new("UICorner"); tc.CornerRadius = UDim.new(0,8); tc.Parent = title
-
--- Minimize/Restore functionality
-local minimized = false
-local normalSize = UDim2.new(0, 420, 0, 640)
-
--- Create the restore button (shown when minimized)
-local restoreButton = Instance.new("TextButton")
-restoreButton.Size = UDim2.new(0, 30, 0, 30)
-restoreButton.Position = UDim2.new(0, 0, 0, 0)
-restoreButton.BackgroundColor3 = THEME.Green
-restoreButton.Text = "+"
-restoreButton.TextColor3 = Color3.new(1, 1, 1)
-restoreButton.TextSize = 20
-restoreButton.BorderSizePixel = 0
-restoreButton.Visible = false
-restoreButton.Parent = main
-local rbcorner = Instance.new("UICorner")
-rbcorner.CornerRadius = UDim.new(0, 4)
-rbcorner.Parent = restoreButton
-
-local function makeTitleButton(text, xOffset)
-    local button = Instance.new("TextButton")
-    button.Size = UDim2.new(0, 30, 0, 26)
-    button.Position = UDim2.new(1, xOffset, 0, 4)
-    button.BackgroundColor3 = THEME.PanelAlt
-    button.BorderSizePixel = 0
-    button.Text = text
-    button.TextColor3 = THEME.Text
-    button.TextSize = 15
-    button.Font = Enum.Font.GothamBold
-    button.AutoButtonColor = true
-    button.Parent = main
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = button
-    return button
-end
-
-local sizeButton = makeTitleButton("□", -70)
-local minimizeButton = makeTitleButton("−", -36)
-
-sizeButton.MouseButton1Click:Connect(function()
-    -- Placeholder for future size functionality if needed
-end)
-
-minimizeButton.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    if minimized then
-        -- Hide all elements and shrink frame
-        title.Visible = false
-        keyHint.Visible = false
-        tabBar.Visible = false
-        for _, page in pairs(pages) do page.Visible = false end
-        main.Size = UDim2.new(0, 30, 0, 30)
-        minimizeButton.Visible = false
-        sizeButton.Visible = false
-        restoreButton.Visible = true
-    else
-        -- Show all elements and restore frame
-        title.Visible = true
-        keyHint.Visible = true
-        tabBar.Visible = true
-        for _, page in pairs(pages) do page.Visible = (page == pages[activeTab]) end
-        main.Size = normalSize
-        minimizeButton.Visible = true
-        sizeButton.Visible = true
-        restoreButton.Visible = false
-    end
-end)
-
-restoreButton.MouseButton1Click:Connect(function()
-    minimized = false
-    title.Visible = true
-    keyHint.Visible = true
-    tabBar.Visible = true
-    for _, page in pairs(pages) do page.Visible = (page == pages[activeTab]) end
-    main.Size = normalSize
-    minimizeButton.Visible = true
-    sizeButton.Visible = true
-    restoreButton.Visible = false
-end)
-
 
 local keyHint = Instance.new("TextLabel")
 keyHint.Size = UDim2.new(1,-16,0,18)
@@ -633,7 +610,7 @@ local activeTab = nil
 
 local function makeTabButton(name, key)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, 90, 0, 24)
+    b.Size = UDim2.new(0, 76, 0, 24)
     b.BackgroundColor3 = THEME.PanelAlt
     b.Text = name
     b.TextColor3 = THEME.Text
@@ -662,15 +639,19 @@ local function makePage(key, yPos, height)
 end
 
 -- TAB PAGES
-local mainPage   = makePage("main", 94, 420)
-local auraPage   = makePage("aura", 94, 420)
-local playerPage = makePage("players", 94, 420)
+local mainPage   = makePage("main", 94, 500)
+local aimPage    = makePage("aim", 94, 500)
+local auraPage   = makePage("aura", 94, 500)
+local gunsPage   = makePage("guns", 94, 500)
+local playerPage = makePage("players", 94, 500)
 
 makeTabButton("Main", "main")
+makeTabButton("Aim", "aim")
 makeTabButton("Aura", "aura")
+makeTabButton("Guns", "guns")
 makeTabButton("Players", "players")
 
--- helper: toggle row
+-- helper: toggle
 local function makeToggle(parent, yPos, labelText, key, onEnable, onDisable)
     local row = Instance.new("Frame")
     row.Size = UDim2.new(1,0,0,30)
@@ -679,7 +660,6 @@ local function makeToggle(parent, yPos, labelText, key, onEnable, onDisable)
     row.BorderSizePixel = 0
     row.Parent = parent
     local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0,4); rc.Parent = row
-
     local lbl = Instance.new("TextLabel")
     lbl.Size = UDim2.new(0.7,0,1,0)
     lbl.Position = UDim2.new(0,10,0,0)
@@ -690,7 +670,6 @@ local function makeToggle(parent, yPos, labelText, key, onEnable, onDisable)
     lbl.Font = Enum.Font.GothamBold
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Parent = row
-
     local btn = Instance.new("TextButton")
     btn.Size = UDim2.new(0,24,0,24)
     btn.Position = UDim2.new(1,-32,0.5,-12)
@@ -700,7 +679,6 @@ local function makeToggle(parent, yPos, labelText, key, onEnable, onDisable)
     btn.AutoButtonColor = false
     btn.Parent = row
     local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0,3); bc.Parent = btn
-
     btn.MouseButton1Click:Connect(function()
         cfg[key] = not cfg[key]
         btn.BackgroundColor3 = cfg[key] and THEME.Green or THEME.GreenDark
@@ -709,178 +687,390 @@ local function makeToggle(parent, yPos, labelText, key, onEnable, onDisable)
     end)
 end
 
--- helper: slider with textbox for numeric values
-local function makeSliderWithTextbox(parent, yPos, label, initialValue, minVal, maxVal, setterCallback)
+-- helper: slider with textbox
+local function makeSlider(parent, yPos, label, initialValue, minVal, maxVal, setter, isFloat)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 50)
+    row.Size = UDim2.new(1, 0, 0, 46)
     row.Position = UDim2.new(0, 0, 0, yPos)
     row.BackgroundColor3 = THEME.Panel
     row.BorderSizePixel = 0
     row.Parent = parent
-    local rc = Instance.new("UICorner")
-    rc.CornerRadius = UDim.new(0, 4)
-    rc.Parent = row
+    local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0, 4); rc.Parent = row
 
     local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -10, 0, 18)
+    lbl.Size = UDim2.new(1, -80, 0, 16)
     lbl.Position = UDim2.new(0, 10, 0, 4)
     lbl.BackgroundTransparency = 1
     lbl.Text = label
     lbl.TextColor3 = THEME.Text
-    lbl.TextSize = 12
+    lbl.TextSize = 11
     lbl.Font = Enum.Font.GothamBold
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Parent = row
 
-    -- Textbox for direct input
     local textBox = Instance.new("TextBox")
     textBox.Size = UDim2.new(0, 60, 0, 20)
-    textBox.Position = UDim2.new(1, -70, 0, 26)
+    textBox.Position = UDim2.new(1, -70, 0, 2)
     textBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     textBox.Text = tostring(initialValue)
     textBox.TextColor3 = THEME.Text
-    textBox.TextSize = 12
+    textBox.TextSize = 11
     textBox.Font = Enum.Font.Code
     textBox.BorderSizePixel = 0
     textBox.ClearTextOnFocus = false
     textBox.Parent = row
-    local tbc = Instance.new("UICorner")
-    tbc.CornerRadius = UDim.new(0, 3)
-    tbc.Parent = textBox
+    local tbc = Instance.new("UICorner"); tbc.CornerRadius = UDim.new(0, 3); tbc.Parent = textBox
 
-    -- Slider
     local slider = Instance.new("TextButton")
-    slider.Size = UDim2.new(1, -80, 0, 20)
+    slider.Size = UDim2.new(1, -20, 0, 14)
     slider.Position = UDim2.new(0, 10, 0, 26)
     slider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     slider.Text = ""
     slider.AutoButtonColor = false
     slider.BorderSizePixel = 0
     slider.Parent = row
-    local sc = Instance.new("UICorner")
-    sc.CornerRadius = UDim.new(0, 3)
-    sc.Parent = slider
+    local sc = Instance.new("UICorner"); sc.CornerRadius = UDim.new(0, 3); sc.Parent = slider
 
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((initialValue - minVal) / (maxVal - minVal), 0, 1, 0)
     fill.BackgroundColor3 = THEME.Green
     fill.BorderSizePixel = 0
     fill.Parent = slider
-    local fc = Instance.new("UICorner")
-    fc.CornerRadius = UDim.new(0, 3)
-    fc.Parent = fill
+    local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(0, 3); fc.Parent = fill
 
     local function updateValue(value)
-        value = math.clamp(math.floor(value), minVal, maxVal)
-        textBox.Text = tostring(value)
+        if isFloat then
+            value = math.clamp(value, minVal, maxVal)
+        else
+            value = math.clamp(math.floor(value), minVal, maxVal)
+        end
+        textBox.Text = isFloat and string.format("%.3f", value) or tostring(value)
         fill.Size = UDim2.new((value - minVal) / (maxVal - minVal), 0, 1, 0)
-        if setterCallback then setterCallback(value) end
+        setter(value)
     end
 
     textBox.FocusLost:Connect(function(enterPressed)
         if enterPressed then
             local num = tonumber(textBox.Text)
-            if num then
-                updateValue(num)
-            else
-                textBox.Text = tostring(initialValue) -- Revert on invalid input
-            end
+            if num then updateValue(num) else textBox.Text = tostring(initialValue) end
         end
     end)
 
-    slider.MouseButton1Down:Connect(function(input)
+    slider.MouseButton1Down:Connect(function()
         local function update()
             local mouse = UserInputService:GetMouseLocation()
             local rel = math.clamp((mouse.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X, 0, 1)
-            local value = minVal + (maxVal - minVal) * rel
-            updateValue(value)
+            updateValue(minVal + (maxVal - minVal) * rel)
         end
         update()
-        local moveConnection, releaseConnection
-        moveConnection = UserInputService.InputChanged:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseMovement then
-                update()
-            end
+        local m, e
+        m = UserInputService.InputChanged:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseMovement then update() end
         end)
-        releaseConnection = UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                moveConnection:Disconnect()
-                releaseConnection:Disconnect()
+        e = UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                m:Disconnect(); e:Disconnect()
             end
         end)
     end)
 end
 
--- Main page
-makeToggle(mainPage, 6,   "Fly (WASD, Space/Ctrl)", "fly", startFly, stopFly)
-makeSliderWithTextbox(mainPage, 40, "Fly Speed", FLY_SPEED, 10, 100, function(value) FLY_SPEED = value end)
-makeToggle(mainPage, 100,  "Hitbox Extender",         "hbe", startHBE, stopHBE)
-makeToggle(mainPage, 134,  "Aim Lock",                "aimlock", startAim, stopAim)
-makeToggle(mainPage, 168, "ESP",                     "esp", startESP, stopESP)
+-- helper: dropdown
+local function makeDropdown(parent, yPos, label, options, current, setter)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 30)
+    row.Position = UDim2.new(0, 0, 0, yPos)
+    row.BackgroundColor3 = THEME.Panel
+    row.BorderSizePixel = 0
+    row.Parent = parent
+    local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0, 4); rc.Parent = row
 
--- Aura page
-makeToggle(auraPage, 6,   "Proximity Aura",          "aura")
-makeToggle(auraPage, 40,  "Kill Everyone in Range",  "killAll")
-makeToggle(auraPage, 74,  "Show FOV Ring",           "fovRing")
-makeToggle(auraPage, 108, "Require Held Weapon",     "auraRequireGun",
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.4, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = THEME.Text
+    lbl.TextSize = 11
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.55, -20, 0, 22)
+    btn.Position = UDim2.new(0.45, 0, 0.5, -11)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btn.Text = current
+    btn.TextColor3 = THEME.Text
+    btn.TextSize = 11
+    btn.Font = Enum.Font.Code
+    btn.BorderSizePixel = 0
+    btn.AutoButtonColor = false
+    btn.Parent = row
+    local bc = Instance.new("UICorner"); bc.CornerRadius = UDim.new(0, 3); bc.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        local idx = 1
+        for i, o in ipairs(options) do if o == btn.Text then idx = i; break end end
+        idx = (idx % #options) + 1
+        btn.Text = options[idx]
+        setter(options[idx])
+    end)
+end
+
+-- ============================================================
+-- MAIN PAGE
+-- ============================================================
+makeToggle(mainPage, 6,   "Fly (WASD, Space/Ctrl)", "fly", startFly, stopFly)
+makeSlider(mainPage, 40, "Fly Speed", FLY_SPEED, 10, 100, function(v) FLY_SPEED = v end, false)
+makeToggle(mainPage, 90,  "Hitbox Extender", "hbe", startHBE, stopHBE)
+makeToggle(mainPage, 124, "ESP",             "esp", startESP, stopESP)
+
+-- ============================================================
+-- AIM PAGE
+-- ============================================================
+makeToggle(aimPage, 6, "Enable Aimlock", "aimlock", startAim, stopAim)
+
+makeDropdown(aimPage, 40, "Lock Part", {"Head", "Torso", "Nearest"}, AIM.part, function(v) AIM.part = v end)
+
+makeSlider(aimPage, 80, "Smoothness (0=tight, 1=slow)", AIM.smooth, 0, 0.99, function(v) AIM.smooth = v end, true)
+
+makeSlider(aimPage, 130, "Aim FOV (pixels)", AIM.fov, 50, 1000, function(v) AIM.fov = v end, false)
+
+-- aim whitelist section
+local aimWlLabel = Instance.new("TextLabel")
+aimWlLabel.Size = UDim2.new(1, 0, 0, 18)
+aimWlLabel.Position = UDim2.new(0, 0, 0, 180)
+aimWlLabel.BackgroundTransparency = 1
+aimWlLabel.Text = "AIM WHITELIST (tap to toggle)"
+aimWlLabel.TextColor3 = THEME.TextDim
+aimWlLabel.TextSize = 10
+aimWlLabel.Font = Enum.Font.Code
+aimWlLabel.TextXAlignment = Enum.TextXAlignment.Left
+aimWlLabel.Parent = aimPage
+
+local aimWlScroll = Instance.new("ScrollingFrame")
+aimWlScroll.Size = UDim2.new(1, 0, 0, 280)
+aimWlScroll.Position = UDim2.new(0, 0, 0, 204)
+aimWlScroll.BackgroundColor3 = THEME.Panel
+aimWlScroll.BorderSizePixel = 0
+aimWlScroll.ScrollBarThickness = 3
+aimWlScroll.ScrollBarImageColor3 = THEME.Green
+aimWlScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+aimWlScroll.Parent = aimPage
+local awc = Instance.new("UICorner"); awc.CornerRadius = UDim.new(0, 4); awc.Parent = aimWlScroll
+local awl = Instance.new("UIListLayout"); awl.Parent = aimWlScroll; awl.SortOrder = Enum.SortOrder.Name; awl.Padding = UDim.new(0, 2)
+
+local function rebuildAimWhitelist()
+    for _, ch in ipairs(aimWlScroll:GetChildren()) do
+        if ch:IsA("TextButton") then ch:Destroy() end
+    end
+    local count = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= localPlayer then
+            count = count + 1
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -8, 0, 26)
+            b.BackgroundColor3 = isWhitelisted(p) and Color3.fromRGB(145,35,42) or Color3.fromRGB(34,34,34)
+            b.Text = (isWhitelisted(p) and "[WL] " or "") .. p.Name
+            b.TextColor3 = THEME.Text
+            b.TextSize = 11
+            b.Font = Enum.Font.Code
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.BorderSizePixel = 0
+            b.AutoButtonColor = false
+            b.Parent = aimWlScroll
+            local bbc = Instance.new("UICorner"); bbc.CornerRadius = UDim.new(0,3); bbc.Parent = b
+            local bpad = Instance.new("UIPadding"); bpad.PaddingLeft = UDim.new(0,8); bpad.Parent = b
+            b.MouseButton1Click:Connect(function()
+                if WHITELIST[p.UserId] then WHITELIST[p.UserId] = nil
+                else WHITELIST[p.UserId] = true end
+                rebuildAimWhitelist()
+                if rebuildPlayerList then rebuildPlayerList() end
+            end)
+        end
+    end
+    aimWlScroll.CanvasSize = UDim2.new(0, 0, 0, count * 28 + 4)
+end
+
+-- ============================================================
+-- AURA PAGE
+-- ============================================================
+makeToggle(auraPage, 6,   "Proximity Aura",         "aura")
+makeToggle(auraPage, 40,  "Kill Everyone in Range", "killAll")
+makeToggle(auraPage, 74,  "Show FOV Ring",          "fovRing")
+makeToggle(auraPage, 108, "Require Held Weapon",    "auraRequireGun",
     function() AURA.requireGun = true end,
     function() AURA.requireGun = false end)
--- aura radius slider
-local radiusLabel = Instance.new("TextLabel")
-radiusLabel.Size = UDim2.new(1,0,0,18)
-radiusLabel.Position = UDim2.new(0,0,0,214)
-radiusLabel.BackgroundTransparency = 1
-radiusLabel.Text = "Aura Radius: " .. AURA.radius .. " studs"
-radiusLabel.TextColor3 = THEME.TextDim
-radiusLabel.TextSize = 10
-radiusLabel.Font = Enum.Font.Code
-radiusLabel.TextXAlignment = Enum.TextXAlignment.Left
-radiusLabel.Parent = auraPage
 
-local radiusSlider = Instance.new("TextButton")
-radiusSlider.Size = UDim2.new(1,0,0,22)
-radiusSlider.Position = UDim2.new(0,0,0,234)
-radiusSlider.BackgroundColor3 = Color3.fromRGB(40,40,40)
-radiusSlider.Text = ""
-radiusSlider.AutoButtonColor = false
-radiusSlider.BorderSizePixel = 0
-radiusSlider.Parent = auraPage
-local rsc = Instance.new("UICorner"); rsc.CornerRadius = UDim.new(0,3); rsc.Parent = radiusSlider
+makeSlider(auraPage, 150, "Aura Radius (studs)", AURA.radius, 10, 300, function(v) AURA.radius = v end, false)
 
-local radiusFill = Instance.new("Frame")
-radiusFill.Size = UDim2.new((AURA.radius-10)/(300-10), 0, 1, 0)
-radiusFill.BackgroundColor3 = THEME.Red
-radiusFill.BorderSizePixel = 0
-radiusFill.Parent = radiusSlider
-local rfc = Instance.new("UICorner"); rfc.CornerRadius = UDim.new(0,3); rfc.Parent = radiusFill
+-- ============================================================
+-- GUNS PAGE
+-- ============================================================
+local gunsScroll = Instance.new("ScrollingFrame")
+gunsScroll.Size = UDim2.new(1, 0, 0, 500)
+gunsScroll.Position = UDim2.new(0, 0, 0, 0)
+gunsScroll.BackgroundColor3 = THEME.Panel
+gunsScroll.BorderSizePixel = 0
+gunsScroll.ScrollBarThickness = 3
+gunsScroll.ScrollBarImageColor3 = THEME.Green
+gunsScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+gunsScroll.Parent = gunsPage
+local gsc = Instance.new("UICorner"); gsc.CornerRadius = UDim.new(0, 4); gsc.Parent = gunsScroll
+local gsl = Instance.new("UIListLayout"); gsl.Parent = gunsScroll; gsl.Padding = UDim.new(0, 3); gsl.SortOrder = Enum.SortOrder.Name
 
-radiusSlider.MouseButton1Down:Connect(function()
-    local function update()
-        local mouse = UserInputService:GetMouseLocation()
-        local rel = math.clamp((mouse.X - radiusSlider.AbsolutePosition.X) / radiusSlider.AbsoluteSize.X, 0, 1)
-        local newRadius = math.floor(10 + (300-10) * rel)
-        AURA.radius = newRadius
-        radiusFill.Size = UDim2.new(rel, 0, 1, 0)
-        radiusLabel.Text = "Aura Radius: " .. newRadius .. " studs"
+-- Fire rate multiplier control
+local multRow = Instance.new("Frame")
+multRow.Size = UDim2.new(1, -8, 0, 60)
+multRow.Position = UDim2.new(0, 4, 0, 4)
+multRow.BackgroundColor3 = THEME.Panel
+multRow.BorderSizePixel = 0
+multRow.Parent = gunsScroll
+local mrc = Instance.new("UICorner"); mrc.CornerRadius = UDim.new(0, 4); mrc.Parent = multRow
+
+local multLbl = Instance.new("TextLabel")
+multLbl.Size = UDim2.new(1, -20, 0, 18)
+multLbl.Position = UDim2.new(0, 10, 0, 4)
+multLbl.BackgroundTransparency = 1
+multLbl.Text = "Fire Rate Multiplier (0.5 = 2x faster)"
+multLbl.TextColor3 = THEME.Text
+multLbl.TextSize = 11
+multLbl.Font = Enum.Font.GothamBold
+multLbl.TextXAlignment = Enum.TextXAlignment.Left
+multLbl.Parent = multRow
+
+local multBox = Instance.new("TextBox")
+multBox.Size = UDim2.new(0, 70, 0, 24)
+multBox.Position = UDim2.new(1, -80, 0, 28)
+multBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+multBox.Text = tostring(FIRE_MULTIPLIER)
+multBox.TextColor3 = THEME.Text
+multBox.TextSize = 11
+multBox.Font = Enum.Font.Code
+multBox.BorderSizePixel = 0
+multBox.ClearTextOnFocus = false
+multBox.Parent = multRow
+local mbc = Instance.new("UICorner"); mbc.CornerRadius = UDim.new(0, 3); mbc.Parent = multBox
+
+local applyBtn = Instance.new("TextButton")
+applyBtn.Size = UDim2.new(0, 90, 0, 24)
+applyBtn.Position = UDim2.new(0, 10, 0, 28)
+applyBtn.BackgroundColor3 = THEME.GreenDark
+applyBtn.Text = "Apply All"
+applyBtn.TextColor3 = THEME.Text
+applyBtn.TextSize = 11
+applyBtn.Font = Enum.Font.GothamBold
+applyBtn.BorderSizePixel = 0
+applyBtn.AutoButtonColor = false
+applyBtn.Parent = multRow
+local abc = Instance.new("UICorner"); abc.CornerRadius = UDim.new(0, 3); abc.Parent = applyBtn
+applyBtn.MouseButton1Click:Connect(function()
+    local num = tonumber(multBox.Text)
+    if num then
+        FIRE_MULTIPLIER = math.clamp(num, 0.01, 10)
+        multBox.Text = tostring(FIRE_MULTIPLIER)
+        applyAllCooldowns()
     end
-    update()
-    local moveConn
-    moveConn = UserInputService.InputChanged:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseMovement then update() end
-    end)
-    local endConn
-    endConn = UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            moveConn:Disconnect(); endConn:Disconnect()
+end)
+
+-- per-gun rows
+for _, gunName in ipairs(GUN_LIST) do
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -8, 0, 54)
+    row.BackgroundColor3 = THEME.Panel
+    row.BorderSizePixel = 0
+    row.Parent = gunsScroll
+    local rc = Instance.new("UICorner"); rc.CornerRadius = UDim.new(0, 4); rc.Parent = row
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Size = UDim2.new(0.4, 0, 0, 18)
+    nameLbl.Position = UDim2.new(0, 10, 0, 4)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text = gunName
+    nameLbl.TextColor3 = THEME.Text
+    nameLbl.TextSize = 11
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.Parent = row
+
+    local cdBox = Instance.new("TextBox")
+    cdBox.Size = UDim2.new(0, 70, 0, 22)
+    cdBox.Position = UDim2.new(1, -80, 0, 4)
+    cdBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    local currentCD = GUN_COOLDOWNS[gunName] or 0.1
+    cdBox.Text = string.format("%.3f", currentCD)
+    cdBox.TextColor3 = THEME.Text
+    cdBox.TextSize = 11
+    cdBox.Font = Enum.Font.Code
+    cdBox.BorderSizePixel = 0
+    cdBox.ClearTextOnFocus = false
+    cdBox.Parent = row
+    local cbc = Instance.new("UICorner"); cbc.CornerRadius = UDim.new(0, 3); cbc.Parent = cdBox
+
+    local slider = Instance.new("TextButton")
+    slider.Size = UDim2.new(1, -20, 0, 14)
+    slider.Position = UDim2.new(0, 10, 0, 32)
+    slider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    slider.Text = ""
+    slider.AutoButtonColor = false
+    slider.BorderSizePixel = 0
+    slider.Parent = row
+    local sc = Instance.new("UICorner"); sc.CornerRadius = UDim.new(0, 3); sc.Parent = slider
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(math.clamp((currentCD - 0.01) / (0.5 - 0.01), 0, 1), 0, 1, 0)
+    fill.BackgroundColor3 = THEME.Green
+    fill.BorderSizePixel = 0
+    fill.Parent = slider
+    local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(0, 3); fc.Parent = fill
+
+    local function setGunCD(v)
+        v = math.clamp(v, 0.01, 0.5)
+        GUN_COOLDOWNS[gunName] = v
+        cdBox.Text = string.format("%.3f", v)
+        fill.Size = UDim2.new((v - 0.01) / (0.5 - 0.01), 0, 1, 0)
+        if GunConfigs and GunConfigs[gunName] then
+            GunConfigs[gunName].CoolDown = v * FIRE_MULTIPLIER
+        end
+    end
+
+    cdBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            local num = tonumber(cdBox.Text)
+            if num then setGunCD(num) else cdBox.Text = string.format("%.3f", currentCD) end
         end
     end)
+
+    slider.MouseButton1Down:Connect(function()
+        local function update()
+            local mouse = UserInputService:GetMouseLocation()
+            local rel = math.clamp((mouse.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X, 0, 1)
+            setGunCD(0.01 + (0.5 - 0.01) * rel)
+        end
+        update()
+        local m, e
+        m = UserInputService.InputChanged:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseMovement then update() end
+        end)
+        e = UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                m:Disconnect(); e:Disconnect()
+            end
+        end)
+    end)
+end
+
+-- fix canvas size
+task.defer(function()
+    gunsScroll.CanvasSize = UDim2.new(0, 0, 0, #GUN_LIST * 58 + 80)
 end)
 
 -- ============================================================
--- PLAYER LIST — tap = whitelist, double click = TP
+-- PLAYERS PAGE
 -- ============================================================
 local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(1,0,0,400)
+scroll.Size = UDim2.new(1,0,0,500)
 scroll.Position = UDim2.new(0,0,0,0)
 scroll.BackgroundColor3 = THEME.Panel
 scroll.BorderSizePixel = 0
@@ -897,7 +1087,7 @@ scrollList.Padding = UDim.new(0,2)
 local DOUBLE_CLICK_WINDOW = 0.35
 local lastClick = {}
 
-local function rebuildPlayerList()
+function rebuildPlayerList()
     for _, ch in ipairs(scroll:GetChildren()) do
         if ch:IsA("TextButton") then ch:Destroy() end
     end
@@ -923,12 +1113,9 @@ local function rebuildPlayerList()
                 local now = tick()
                 local last = lastClick[p.UserId] or 0
                 if (now - last) <= DOUBLE_CLICK_WINDOW then
-                    -- double click → TP
                     lastClick[p.UserId] = 0
                     tpToPlayer(p)
                 else
-                    -- single click → whitelist toggle (after a short delay so it
-                    -- doesn't fire before a potential second click)
                     lastClick[p.UserId] = now
                     task.delay(DOUBLE_CLICK_WINDOW + 0.02, function()
                         if lastClick[p.UserId] == now then
@@ -938,6 +1125,7 @@ local function rebuildPlayerList()
                                 WHITELIST[p.UserId] = true
                             end
                             rebuildPlayerList()
+                            if rebuildAimWhitelist then rebuildAimWhitelist() end
                         end
                     end)
                 end
@@ -948,8 +1136,9 @@ local function rebuildPlayerList()
 end
 
 rebuildPlayerList()
-Players.PlayerAdded:Connect(function() task.wait(0.5); rebuildPlayerList() end)
-Players.PlayerRemoving:Connect(function() task.wait(0.2); rebuildPlayerList() end)
+rebuildAimWhitelist()
+Players.PlayerAdded:Connect(function() task.wait(0.5); rebuildPlayerList(); rebuildAimWhitelist() end)
+Players.PlayerRemoving:Connect(function() task.wait(0.2); rebuildPlayerList(); rebuildAimWhitelist() end)
 
 -- ============================================================
 -- KEY BINDS
@@ -961,7 +1150,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- show main tab by default
 pages.main.Visible = true
 
 -- ============================================================
@@ -978,4 +1166,4 @@ localPlayer.CharacterRemoving:Connect(function()
     end
 end)
 
-print("ur my ***** nigg")
+print("lel ez scripts")
