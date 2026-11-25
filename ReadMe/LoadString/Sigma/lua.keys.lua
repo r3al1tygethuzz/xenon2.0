@@ -1,5 +1,5 @@
 --//==================================================
---// KEY SYSTEM (FULL FIXED)
+--// KEY SYSTEM (FULL - supports Global Keys)
 --//==================================================
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -158,7 +158,6 @@ local function loadMainScript()
             error("Main script returned empty response.")
         end
 
-        -- Only treat as real 404 if it looks like GitHub's 404 page
         local start = source:sub(1, 80)
         if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
             error("Main script URL returned 404. Check MAIN_URL.")
@@ -241,13 +240,24 @@ local function loadKeys()
 
     if not success then
         warn("[KeySystem] Failed to load keys.lua:", result)
-        return nil, tostring(result)
+        return nil
     end
-    if type(result) ~= "table" then
-        warn("[KeySystem] keys.lua did not return a table.")
-        return nil, "keys.lua did not return a table."
+
+    -- Support both old format and new format
+    if type(result) == "table" then
+        if result.users or result.global then
+            return result
+        else
+            -- old format compatibility
+            return {
+                users = result,
+                global = {}
+            }
+        end
     end
-    return result
+
+    warn("[KeySystem] keys.lua did not return a table.")
+    return nil
 end
 
 --//==================================================
@@ -279,44 +289,33 @@ local function verifyKey(inputKey)
         return false, "Please enter a key."
     end
 
-    local keys = loadKeys()
-    if not keys then
+    local data = loadKeys()
+    if not data then
         return false, "Could not load key server."
     end
 
-    local account = keys[userId] or keys[username]
+    local users = data.users or {}
+    local globalKeys = data.global or {}
+
+    local account = nil
+    local isGlobal = false
+
+    -- 1. Check global keys first
+    if globalKeys[inputKey] then
+        account = globalKeys[inputKey]
+        isGlobal = true
+    else
+        -- 2. Check user-specific key
+        local userEntry = users[userId] or users[username]
+        if userEntry and tostring(userEntry.key) == inputKey then
+            account = userEntry
+        end
+    end
+
     if not account then
         sendLog(
-            "❌ No Key Registered",
-            "User has no key assigned.",
-            15105570,
-            {
-                { name = "Username", value = username, inline = true },
-                { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false }
-            }
-        )
-        return false, "No key is registered to this account."
-    end
-
-    if type(account) ~= "table" then
-        sendLog(
-            "⚠️ Invalid Database Entry",
-            "Key database entry is malformed.",
-            15105570,
-            {
-                { name = "Username", value = username, inline = true },
-                { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false }
-            }
-        )
-        return false, "Invalid key database entry."
-    end
-
-    if tostring(account.key) ~= inputKey then
-        sendLog(
-            "❌ Invalid Key",
-            "Wrong key entered.",
+            "❌ Invalid / No Key",
+            "Wrong key or no key registered for this account.",
             15158332,
             {
                 { name = "Username", value = username, inline = true },
@@ -328,26 +327,28 @@ local function verifyKey(inputKey)
         return false, "Invalid key."
     end
 
+    -- Expiration check
     local expires = tonumber(account.expires) or 0
     if expires ~= 0 and os.time() >= expires then
         sendLog(
             "⏰ Key Expired",
-            "User tried to use an expired key.",
+            isGlobal and "A global key has expired." or "User tried to use an expired key.",
             15105570,
             {
                 { name = "Username", value = username, inline = true },
                 { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false }
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Key Type", value = isGlobal and "Global" or "User-specific", inline = true }
             }
         )
         return false, "This key has expired."
     end
 
-    -- Multi-HWID / suspicious check
+    -- Multi-HWID check (only for user-specific keys)
     local suspicious = false
     local suspiciousReason = nil
 
-    if account.hwid and account.hwid ~= "" and tostring(account.hwid) ~= tostring(clientId) then
+    if not isGlobal and account.hwid and account.hwid ~= "" and tostring(account.hwid) ~= tostring(clientId) then
         suspicious = true
         suspiciousReason = "Key is locked to a different HWID"
     end
@@ -366,19 +367,18 @@ local function verifyKey(inputKey)
                 { name = "Reason", value = suspiciousReason, inline = false }
             }
         )
-        -- Uncomment the next line if you want to hard-block shared keys:
-        -- return false, "This key is locked to another device."
     end
 
     sendLog(
         "✅ Key Verified",
-        suspicious and "Key accepted but flagged as suspicious." or "Key verified successfully.",
+        isGlobal and "Global key accepted." or (suspicious and "Key accepted but flagged as suspicious." or "Key verified successfully."),
         suspicious and 16776960 or 5763719,
         {
             { name = "Username", value = username, inline = true },
             { name = "User ID", value = userId, inline = true },
             { name = "HWID", value = "```" .. clientId .. "```", inline = false },
             { name = "Key", value = "||" .. inputKey .. "||", inline = false },
+            { name = "Type", value = isGlobal and "Global (any account)" or "User-specific", inline = true },
             { name = "Suspicious", value = suspicious and ("Yes – " .. suspiciousReason) or "No", inline = false }
         }
     )
