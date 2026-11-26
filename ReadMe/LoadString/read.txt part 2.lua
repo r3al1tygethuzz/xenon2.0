@@ -1,5 +1,5 @@
 -- Hey, if you're readying this, you're prolly gay, smirky wirky, I'm gonna put a broken script below, okay.
-
+--MADE BY G.U.A.R.D.I.A.N
 -- Xenon v2.5 | zombie farm — draggable minimized rectangle, ground mode, anti-afk, zombie census
 if not game:IsLoaded() then game.Loaded:Wait() end
 
