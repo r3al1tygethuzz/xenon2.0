@@ -378,38 +378,42 @@ local function normalizeDatabase(raw)
 end
 
 local function loadKeys(useCacheBuster)
-    local url = useCacheBuster and cacheBustedUrl(KEYS_URL) or KEYS_URL
+    local urls = {}
+    if useCacheBuster then
+        table.insert(urls, cacheBustedUrl(KEYS_URL))
+    end
+    table.insert(urls, KEYS_URL)
 
-    local success, result = pcall(function()
-        local source = game:HttpGet(url)
-        if not source or source == "" then
-            error("GitHub returned an empty file.")
+    for _, url in ipairs(urls) do
+        local success, result = pcall(function()
+            local source = game:HttpGet(url)
+            if not source or source == "" then
+                error("GitHub returned an empty file.")
+            end
+
+            local start = source:sub(1, 80)
+            if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
+                error("keys.lua URL returned 404. Check the GitHub link.")
+            end
+
+            local loaded = loadstring(source)
+            if not loaded then
+                error("Could not compile keys.lua (invalid Lua).")
+            end
+            return loaded()
+        end)
+
+        if success then
+            local database = normalizeDatabase(result)
+            if database then
+                return database
+            end
+        else
+            warn("[KeySystem] Failed to load keys.lua from", url, ":", result)
         end
-
-        local start = source:sub(1, 80)
-        if start:find("404: Not Found") or start:find("<!DOCTYPE html>") then
-            error("keys.lua URL returned 404. Check the GitHub link.")
-        end
-
-        local loaded = loadstring(source)
-        if not loaded then
-            error("Could not compile keys.lua (invalid Lua).")
-        end
-        return loaded()
-    end)
-
-    if not success then
-        warn("[KeySystem] Failed to load keys.lua:", result)
-        return nil
     end
 
-    local database = normalizeDatabase(result)
-
-    if not database then
-        warn("[KeySystem] keys.lua did not return a table.")
-    end
-
-    return database
+    return nil
 end
 
 local function lookupKey(entries, inputKey)
@@ -624,25 +628,25 @@ local function verifyKey(inputKey)
 
     if boundHwid ~= nil and tostring(boundHwid) ~= "" then
         if tostring(boundHwid) ~= tostring(clientId) then
-            sendLog(
-                "🚨 KEY LOCKED",
-                "A key bound to another device was used.",
-                16711680,
-                {
-                    { name = "Username", value = username, inline = true },
-                    { name = "User ID", value = userId, inline = true },
-                    { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
-                    { name = "Bound HWID", value = "```" .. tostring(boundHwid) .. "```", inline = false },
-                    { name = "Key", value = "||" .. inputKey .. "||", inline = false }
-                }
-            )
-            return false, "This key is locked to another device."
-        end
-    else
-        local claimed, reason = claimKey(inputKey)
+            -- The key appears bound to another device. GitHub's raw CDN can
+            -- serve a stale copy right after a reset/rebind, so retry once.
+            task.wait(3)
+            local freshData = loadKeys(true)
+            if freshData then
+                local _, freshEntry = lookupKey(freshData.keys, inputKey)
+                if freshEntry then
+                    local freshHwid = freshEntry.hwid
+                    if freshHwid == nil or tostring(freshHwid) == "" then
+                        boundHwid = nil
+                    elseif tostring(freshHwid) == tostring(clientId) then
+                        boundHwid = freshHwid
+                    else
+                        boundHwid = freshHwid
+                    end
+                end
+            end
 
-        if not claimed then
-            if reason == "locked" then
+            if boundHwid ~= nil and tostring(boundHwid) ~= "" and tostring(boundHwid) ~= tostring(clientId) then
                 sendLog(
                     "🚨 KEY LOCKED",
                     "A key bound to another device was used.",
@@ -651,22 +655,29 @@ local function verifyKey(inputKey)
                         { name = "Username", value = username, inline = true },
                         { name = "User ID", value = userId, inline = true },
                         { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                        { name = "Bound HWID", value = "```" .. tostring(boundHwid) .. "```", inline = false },
                         { name = "Key", value = "||" .. inputKey .. "||", inline = false }
                     }
                 )
                 return false, "This key is locked to another device."
             end
-
-            if reason == "timeout" then
-                return false, "Key binding timed out. Try again in a moment."
-            end
-
-            return false, "Could not reach the key server. Try again."
         end
+    else
+        -- First use: fire a claim so the bot binds this HWID to the key.
+        -- We do not block on the bind: the claim is sent best-effort and the
+        -- bot records the HWID asynchronously. Access is granted immediately.
+        local claimedHash = keyHash(inputKey)
+        local nonce = tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999))
+
+        postWebhook({
+            content = CLAIM_PREFIX .. claimedHash .. "|" .. clientId .. "|" .. nonce,
+            username = "Nyra Key Claim",
+            allowed_mentions = { parse = {} },
+        })
 
         sendLog(
-            "🔒 Key Bound",
-            "An unbound key was locked to this device.",
+            "🔒 Key Claim Sent",
+            "An unbound key is being locked to this device.",
             3447003,
             {
                 { name = "Username", value = username, inline = true },
