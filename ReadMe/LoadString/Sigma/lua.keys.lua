@@ -18,9 +18,112 @@ local userId = tostring(LocalPlayer.UserId)
 local username = LocalPlayer.Name
 
 --//==================================================
+--// HWID CLAIM CONFIG
+--//==================================================
+local CLAIM_PREFIX = "NYRA-CLAIM|"
+local CLAIM_TIMEOUT = 25
+local CLAIM_POLL_INTERVAL = 3
+
+local function trim(value)
+    local text = tostring(value or "")
+    text = text:gsub("^%s+", "")
+    text = text:gsub("%s+$", "")
+    return text
+end
+
+-- FNV-1a 32-bit. Must match github_key_store.key_hash().
+local function xor32(a, b)
+    if bit32 then
+        return bit32.bxor(a, b)
+    end
+
+    local result, bit = 0, 1
+    for _ = 1, 32 do
+        local aBit = a % 2
+        local bBit = b % 2
+        if aBit ~= bBit then
+            result = result + bit
+        end
+        a = (a - aBit) / 2
+        b = (b - bBit) / 2
+        bit = bit * 2
+    end
+    return result
+end
+
+local function keyHash(key)
+    local hash = 2166136261
+    local text = tostring(key or ""):upper()
+
+    for index = 1, #text do
+        hash = xor32(hash, text:byte(index))
+
+        if bit32 then
+            -- Multiply by the FNV prime (16777619) using shifts so the
+            -- intermediate values stay inside 32 bits.
+            hash = (
+                hash
+                + bit32.lshift(hash, 1)
+                + bit32.lshift(hash, 4)
+                + bit32.lshift(hash, 7)
+                + bit32.lshift(hash, 8)
+                + bit32.lshift(hash, 24)
+            ) % 4294967296
+        else
+            local low = hash % 65536
+            local high = math.floor(hash / 65536)
+            local mixed = (low * 16777619) % 4294967296
+            mixed = (mixed + ((high * 16777619) % 65536) * 65536) % 4294967296
+            hash = mixed
+        end
+    end
+
+    return string.format("%08x", hash)
+end
+
+local function postWebhook(payload)
+    if not webhookUrl then
+        return false
+    end
+
+    local success, jsonData = pcall(function()
+        return HttpService:JSONEncode(payload)
+    end)
+
+    if not success then
+        warn("[KeySystem] Could not encode webhook payload:", jsonData)
+        return false
+    end
+
+    local requestFunction = (syn and syn.request) or (http and http.request) or http_request or request
+
+    if requestFunction then
+        local ok, response = pcall(requestFunction, {
+            Url = webhookUrl,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = jsonData
+        })
+        if not ok then
+            return false
+        end
+        if type(response) == "table" and response.StatusCode and response.StatusCode >= 400 then
+            return false
+        end
+        return true
+    end
+
+    local ok = pcall(function()
+        HttpService:PostAsync(webhookUrl, jsonData, Enum.HttpContentType.ApplicationJson)
+    end)
+    return ok
+end
+
+--//==================================================
 --// BANNED HWIDs
 --//==================================================
-local BANNED_HWIDS_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/bannedHWIDs.lua"
+local BANNED_HWIDS_URL = (type(bannedHwidsUrl) == "string" and bannedHwidsUrl ~= "" and bannedHwidsUrl)
+    or "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/bannedHWIDs.lua"
 
 local function loadBannedHWIDs()
     local success, result = pcall(function()
@@ -220,9 +323,76 @@ end)
 --//==================================================
 --// KEY DATABASE
 --//==================================================
-local function loadKeys()
+local function cacheBustedUrl(url)
+    local separator = url:find("?") and "&" or "?"
+    return url
+        .. separator
+        .. "t="
+        .. tostring(os.time())
+        .. "&r="
+        .. tostring(math.random(100000, 999999))
+end
+
+local function normalizeDatabase(raw)
+    if type(raw) ~= "table" then
+        return nil
+    end
+
+    -- New format:
+    -- { keys = { [key] = { expires, hwid } }, global = { [key] = { expires } } }
+    if type(raw.keys) == "table" or type(raw.global) == "table" then
+        return {
+            keys = type(raw.keys) == "table" and raw.keys or {},
+            global = type(raw.global) == "table" and raw.global or {},
+        }
+    end
+
+    -- Legacy format:
+    -- { users = { [robloxId] = { key, expires } }, global = { [robloxId] = { key, expires } } }
+    if type(raw.users) == "table" then
+        local converted = { keys = {}, global = {} }
+
+        for _, entry in pairs(raw.users) do
+            if type(entry) == "table" and entry.key then
+                converted.keys[tostring(entry.key)] = {
+                    expires = tonumber(entry.expires) or 0,
+                    hwid = entry.hwid,
+                }
+            end
+        end
+
+        for _, entry in pairs(raw.global or {}) do
+            if type(entry) == "table" and entry.key then
+                converted.global[tostring(entry.key)] = {
+                    expires = tonumber(entry.expires) or 0,
+                }
+            end
+        end
+
+        return converted
+    end
+
+    -- Bare key map:
+    -- { [key] = { expires, hwid } }
+    local converted = { keys = {}, global = {} }
+
+    for name, entry in pairs(raw) do
+        if type(entry) == "table" and entry.expires ~= nil then
+            converted.keys[tostring(name)] = {
+                expires = tonumber(entry.expires) or 0,
+                hwid = entry.hwid,
+            }
+        end
+    end
+
+    return converted
+end
+
+local function loadKeys(useCacheBuster)
+    local url = useCacheBuster and cacheBustedUrl(KEYS_URL) or KEYS_URL
+
     local success, result = pcall(function()
-        local source = game:HttpGet(KEYS_URL)
+        local source = game:HttpGet(url)
         if not source or source == "" then
             error("GitHub returned an empty file.")
         end
@@ -244,21 +414,80 @@ local function loadKeys()
         return nil
     end
 
-    -- Support both old format and new format
-    if type(result) == "table" then
-        if result.users or result.global then
-            return result
-        else
-            -- old format compatibility
-            return {
-                users = result,
-                global = {}
-            }
+    local database = normalizeDatabase(result)
+
+    if not database then
+        warn("[KeySystem] keys.lua did not return a table.")
+    end
+
+    return database
+end
+
+local function lookupKey(entries, inputKey)
+    if type(entries) ~= "table" then
+        return nil, nil
+    end
+
+    if entries[inputKey] ~= nil then
+        return inputKey, entries[inputKey]
+    end
+
+    local wanted = inputKey:upper()
+
+    for name, entry in pairs(entries) do
+        if tostring(name):upper() == wanted then
+            return tostring(name), entry
         end
     end
 
-    warn("[KeySystem] keys.lua did not return a table.")
-    return nil
+    return nil, nil
+end
+
+local function isExpired(entry)
+    local expires = tonumber(entry and entry.expires) or 0
+    return expires ~= 0 and os.time() >= expires
+end
+
+-- Ask the bot to bind this key to our HWID, then wait for keys.lua to update.
+local function claimKey(inputKey)
+    local claimedHash = keyHash(inputKey)
+    local nonce = tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999))
+
+    local sent = postWebhook({
+        content = CLAIM_PREFIX .. claimedHash .. "|" .. clientId .. "|" .. nonce,
+        username = "Nyra Key Claim",
+        allowed_mentions = { parse = {} },
+    })
+
+    if not sent then
+        return false, "network"
+    end
+
+    local deadline = os.time() + CLAIM_TIMEOUT
+
+    while os.time() < deadline do
+        task.wait(CLAIM_POLL_INTERVAL)
+
+        local database = loadKeys(true)
+
+        if database then
+            local _, entry = lookupKey(database.keys, inputKey)
+
+            if entry then
+                local bound = entry.hwid
+
+                if bound == nil or tostring(bound) == "" then
+                    -- Not bound yet; keep waiting.
+                elseif tostring(bound) == tostring(clientId) then
+                    return true, "bound"
+                else
+                    return false, "locked"
+                end
+            end
+        end
+    end
+
+    return false, "timeout"
 end
 
 --//==================================================
@@ -285,38 +514,58 @@ local function verifyKey(inputKey)
         return false, "Banned: " .. reason
     end
 
-    inputKey = tostring(inputKey or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    inputKey = trim(inputKey)
     if inputKey == "" then
         return false, "Please enter a key."
     end
 
-    local data = loadKeys()
+    local data = loadKeys(true)
     if not data then
         return false, "Could not load key server."
     end
 
-    local users = data.users or {}
-    local globalKeys = data.global or {}
+    -- 1. Global keys: any device, still expire.
+    local _, globalEntry = lookupKey(data.global, inputKey)
 
-    local account = nil
-    local isGlobal = false
-
-    -- 1. Check global keys first
-    if globalKeys[inputKey] then
-        account = globalKeys[inputKey]
-        isGlobal = true
-    else
-        -- 2. Check user-specific key
-        local userEntry = users[userId] or users[username]
-        if userEntry and tostring(userEntry.key) == inputKey then
-            account = userEntry
+    if globalEntry then
+        if isExpired(globalEntry) then
+            sendLog(
+                "⏰ Key Expired",
+                "A global key has expired.",
+                15105570,
+                {
+                    { name = "Username", value = username, inline = true },
+                    { name = "User ID", value = userId, inline = true },
+                    { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                    { name = "Key Type", value = "Global", inline = true }
+                }
+            )
+            return false, "This key has expired."
         end
+
+        sendLog(
+            "✅ Key Verified",
+            "Global key accepted.",
+            5763719,
+            {
+                { name = "Username", value = username, inline = true },
+                { name = "User ID", value = userId, inline = true },
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Key", value = "||" .. inputKey .. "||", inline = false },
+                { name = "Type", value = "Global (any device)", inline = true }
+            }
+        )
+
+        return true, "Key verified successfully!"
     end
 
-    if not account then
+    -- 2. HWID-locked keys.
+    local _, keyEntry = lookupKey(data.keys, inputKey)
+
+    if not keyEntry then
         sendLog(
-            "❌ Invalid / No Key",
-            "Wrong key or no key registered for this account.",
+            "❌ Invalid Key",
+            "A key that does not exist was entered.",
             15158332,
             {
                 { name = "Username", value = username, inline = true },
@@ -328,59 +577,89 @@ local function verifyKey(inputKey)
         return false, "Invalid key."
     end
 
-    -- Expiration check
-    local expires = tonumber(account.expires) or 0
-    if expires ~= 0 and os.time() >= expires then
+    if isExpired(keyEntry) then
         sendLog(
             "⏰ Key Expired",
-            isGlobal and "A global key has expired." or "User tried to use an expired key.",
+            "An expired HWID key was entered.",
             15105570,
             {
                 { name = "Username", value = username, inline = true },
                 { name = "User ID", value = userId, inline = true },
                 { name = "HWID", value = "```" .. clientId .. "```", inline = false },
-                { name = "Key Type", value = isGlobal and "Global" or "User-specific", inline = true }
+                { name = "Key Type", value = "HWID", inline = true }
             }
         )
         return false, "This key has expired."
     end
 
-    -- Multi-HWID check (only for user-specific keys)
-    local suspicious = false
-    local suspiciousReason = nil
+    local boundHwid = keyEntry.hwid
 
-    if not isGlobal and account.hwid and account.hwid ~= "" and tostring(account.hwid) ~= tostring(clientId) then
-        suspicious = true
-        suspiciousReason = "Key is locked to a different HWID"
-    end
+    if boundHwid ~= nil and tostring(boundHwid) ~= "" then
+        if tostring(boundHwid) ~= tostring(clientId) then
+            sendLog(
+                "🚨 KEY LOCKED",
+                "A key bound to another device was used.",
+                16711680,
+                {
+                    { name = "Username", value = username, inline = true },
+                    { name = "User ID", value = userId, inline = true },
+                    { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                    { name = "Bound HWID", value = "```" .. tostring(boundHwid) .. "```", inline = false },
+                    { name = "Key", value = "||" .. inputKey .. "||", inline = false }
+                }
+            )
+            return false, "This key is locked to another device."
+        end
+    else
+        -- First use: ask the bot to bind this key to our HWID.
+        local claimed, reason = claimKey(inputKey)
 
-    if suspicious then
+        if not claimed then
+            if reason == "locked" then
+                sendLog(
+                    "🚨 KEY LOCKED",
+                    "A key bound to another device was used.",
+                    16711680,
+                    {
+                        { name = "Username", value = username, inline = true },
+                        { name = "User ID", value = userId, inline = true },
+                        { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                        { name = "Key", value = "||" .. inputKey .. "||", inline = false }
+                    }
+                )
+                return false, "This key is locked to another device."
+            end
+
+            if reason == "timeout" then
+                return false, "Key binding timed out. Try again in a moment."
+            end
+
+            return false, "Could not reach the key server. Try again."
+        end
+
         sendLog(
-            "🚨 SUSPICIOUS ACTIVITY",
-            "Possible key sharing / multi-HWID usage detected.",
-            16711680,
+            "🔒 Key Bound",
+            "An unbound key was locked to this device.",
+            3447003,
             {
                 { name = "Username", value = username, inline = true },
                 { name = "User ID", value = userId, inline = true },
-                { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
-                { name = "Expected HWID", value = "```" .. tostring(account.hwid) .. "```", inline = false },
-                { name = "Key Used", value = "||" .. inputKey .. "||", inline = false },
-                { name = "Reason", value = suspiciousReason, inline = false }
+                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+                { name = "Key", value = "||" .. inputKey .. "||", inline = false }
             }
         )
     end
 
     sendLog(
         "✅ Key Verified",
-        isGlobal and "Global key accepted." or (suspicious and "Key accepted but flagged as suspicious." or "Key verified successfully."),
-        suspicious and 16776960 or 5763719,
+        "HWID key accepted.",
+        5763719,
         {
             { name = "Username", value = username, inline = true },
             { name = "User ID", value = userId, inline = true },
             { name = "HWID", value = "```" .. clientId .. "```", inline = false },
             { name = "Key", value = "||" .. inputKey .. "||", inline = false },
-            { name = "Type", value = isGlobal and "Global (any account)" or "User-specific", inline = true },
-            { name = "Suspicious", value = suspicious and ("Yes – " .. suspiciousReason) or "No", inline = false }
+            { name = "Type", value = "HWID", inline = true }
         }
     )
 
