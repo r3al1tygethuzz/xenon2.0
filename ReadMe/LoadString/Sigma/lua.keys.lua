@@ -21,8 +21,8 @@ local username = LocalPlayer.Name
 --// HWID CLAIM CONFIG
 --//==================================================
 local CLAIM_PREFIX = "NYRA-CLAIM|"
-local CLAIM_TIMEOUT = 25
-local CLAIM_POLL_INTERVAL = 3
+local CLAIM_TIMEOUT = 45
+local CLAIM_POLL_INTERVAL = 2
 
 local function trim(value)
     local text = tostring(value or "")
@@ -59,8 +59,6 @@ local function keyHash(key)
         hash = xor32(hash, text:byte(index))
 
         if bit32 then
-            -- Multiply by the FNV prime (16777619) using shifts so the
-            -- intermediate values stay inside 32 bits.
             hash = (
                 hash
                 + bit32.lshift(hash, 1)
@@ -157,21 +155,18 @@ end
 
 local function isHWIDBanned(hwid)
     local banned = loadBannedHWIDs()
-    if not banned then
+    if type(banned) ~= "table" then
         return false, nil
     end
 
     local entry = banned[hwid]
     if entry ~= nil then
-        if type(entry) == "string" and entry ~= "" then
-            return true, entry
-        end
-        return true, "Your hardware ID has been permanently banned."
+        return true, tostring(entry)
     end
 
-    for _, v in pairs(banned) do
-        if tostring(v) == tostring(hwid) then
-            return true, "Your hardware ID has been permanently banned."
+    for key, value in pairs(banned) do
+        if tostring(key) == tostring(hwid) then
+            return true, tostring(value)
         end
     end
 
@@ -338,8 +333,6 @@ local function normalizeDatabase(raw)
         return nil
     end
 
-    -- New format:
-    -- { keys = { [key] = { expires, hwid } }, global = { [key] = { expires } } }
     if type(raw.keys) == "table" or type(raw.global) == "table" then
         return {
             keys = type(raw.keys) == "table" and raw.keys or {},
@@ -347,8 +340,6 @@ local function normalizeDatabase(raw)
         }
     end
 
-    -- Legacy format:
-    -- { users = { [robloxId] = { key, expires } }, global = { [robloxId] = { key, expires } } }
     if type(raw.users) == "table" then
         local converted = { keys = {}, global = {} }
 
@@ -372,8 +363,6 @@ local function normalizeDatabase(raw)
         return converted
     end
 
-    -- Bare key map:
-    -- { [key] = { expires, hwid } }
     local converted = { keys = {}, global = {} }
 
     for name, entry in pairs(raw) do
@@ -448,7 +437,6 @@ local function isExpired(entry)
     return expires ~= 0 and os.time() >= expires
 end
 
--- Ask the bot to bind this key to our HWID, then wait for keys.lua to update.
 local function claimKey(inputKey)
     local claimedHash = keyHash(inputKey)
     local nonce = tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999))
@@ -524,7 +512,6 @@ local function verifyKey(inputKey)
         return false, "Could not load key server."
     end
 
-    -- 1. Global keys: any device, still expire.
     local _, globalEntry = lookupKey(data.global, inputKey)
 
     if globalEntry then
@@ -559,7 +546,6 @@ local function verifyKey(inputKey)
         return true, "Key verified successfully!"
     end
 
-    -- 2. HWID-locked keys.
     local _, keyEntry = lookupKey(data.keys, inputKey)
 
     if not keyEntry then
@@ -611,7 +597,6 @@ local function verifyKey(inputKey)
             return false, "This key is locked to another device."
         end
     else
-        -- First use: ask the bot to bind this key to our HWID.
         local claimed, reason = claimKey(inputKey)
 
         if not claimed then
