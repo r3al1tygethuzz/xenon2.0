@@ -21,8 +21,8 @@ local username = LocalPlayer.Name
 --// HWID CLAIM CONFIG
 --//==================================================
 local CLAIM_PREFIX = "NYRA-CLAIM|"
-local CLAIM_TIMEOUT = 45
-local CLAIM_POLL_INTERVAL = 2
+local CLAIM_TIMEOUT = 90
+local CLAIM_POLL_INTERVAL = 3
 
 local function trim(value)
     local text = tostring(value or "")
@@ -471,6 +471,48 @@ local function claimKey(inputKey)
                 else
                     return false, "locked"
                 end
+            end
+        end
+    end
+
+    -- One extra retry: the GitHub raw CDN may lag behind.
+    task.wait(5)
+    local database = loadKeys(true)
+    if database then
+        local _, entry = lookupKey(database.keys, inputKey)
+        if entry then
+            local bound = entry.hwid
+            if bound == nil or tostring(bound) == "" then
+                -- Still unbound; retry the claim once.
+                local sent = postWebhook({
+                    content = CLAIM_PREFIX .. claimedHash .. "|" .. clientId .. "|" .. tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999)),
+                    username = "Nyra Key Claim",
+                    allowed_mentions = { parse = {} },
+                })
+                if sent then
+                    local retryDeadline = os.time() + 20
+                    while os.time() < retryDeadline do
+                        task.wait(2)
+                        local db2 = loadKeys(true)
+                        if db2 then
+                            local _, e2 = lookupKey(db2.keys, inputKey)
+                            if e2 then
+                                local b2 = e2.hwid
+                                if b2 ~= nil and tostring(b2) ~= "" then
+                                    if tostring(b2) == tostring(clientId) then
+                                        return true, "bound"
+                                    else
+                                        return false, "locked"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            elseif tostring(bound) == tostring(clientId) then
+                return true, "bound"
+            else
+                return false, "locked"
             end
         end
     end
