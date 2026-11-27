@@ -707,20 +707,25 @@ local function verifyKey(inputKey)
 
     if boundHwid ~= nil and tostring(boundHwid) ~= "" then
         if tostring(boundHwid) ~= tostring(clientId) then
-            -- The key appears bound to another device. GitHub's raw CDN can
-            -- serve a stale copy right after a reset/rebind, so retry once.
-            task.wait(3)
-            local freshData = loadKeys(true)
-            if freshData then
-                local _, freshEntry = lookupKey(freshData.keys, inputKey)
-                if freshEntry then
-                    local freshHwid = freshEntry.hwid
-                    if freshHwid == nil or tostring(freshHwid) == "" then
-                        boundHwid = nil
-                    elseif tostring(freshHwid) == tostring(clientId) then
-                        boundHwid = freshHwid
-                    else
-                        boundHwid = freshHwid
+            -- GitHub raw CDN can serve stale data; retry a few times.
+            local retries = 0
+            while retries < 3 do
+                retries = retries + 1
+                task.wait(4)
+                local freshData = loadKeys(true)
+                if freshData then
+                    local _, freshEntry = lookupKey(freshData.keys, inputKey)
+                    if freshEntry then
+                        local freshHwid = freshEntry.hwid
+                        if freshHwid == nil or tostring(freshHwid) == "" then
+                            boundHwid = nil
+                            break
+                        elseif tostring(freshHwid) == tostring(clientId) then
+                            boundHwid = freshHwid
+                            break
+                        else
+                            boundHwid = freshHwid
+                        end
                     end
                 end
             end
@@ -742,9 +747,8 @@ local function verifyKey(inputKey)
             end
         end
     else
-        -- First use: fire a claim so the bot binds this HWID to the key.
-        -- We do not block on the bind: the claim is sent best-effort and the
-        -- bot records the HWID asynchronously. Access is granted immediately.
+        -- First use: send a claim so the bot binds this HWID to the key.
+        -- Then poll until the bind is confirmed (or timeout).
         local claimedHash = keyHash(inputKey)
         local nonce = tostring(currentTime()) .. "-" .. tostring(math.random(100000, 999999))
 
@@ -754,9 +758,62 @@ local function verifyKey(inputKey)
             allowed_mentions = { parse = {} },
         })
 
+        -- Poll for confirmation.
+        local deadline = currentTime() + 60
+        local bound = false
+        while currentTime() < deadline do
+            task.wait(3)
+            local freshData = loadKeys(true)
+            if freshData then
+                local _, freshEntry = lookupKey(freshData.keys, inputKey)
+                if freshEntry then
+                    local fh = freshEntry.hwid
+                    if fh ~= nil and tostring(fh) ~= "" then
+                        if tostring(fh) == tostring(clientId) then
+                            bound = true
+                        end
+                        break
+                    end
+                end
+            end
+        end
+
+        if not bound then
+            -- Final retry.
+            task.wait(5)
+            local finalData = loadKeys(true)
+            if finalData then
+                local _, finalEntry = lookupKey(finalData.keys, inputKey)
+                if finalEntry then
+                    local fh = finalEntry.hwid
+                    if fh ~= nil and tostring(fh) == tostring(clientId) then
+                        bound = true
+                    elseif fh ~= nil and tostring(fh) ~= "" then
+                        sendLog(
+                            "🚨 KEY LOCKED",
+                            "A key bound to another device was used.",
+                            16711680,
+                            {
+                                { name = "Username", value = username, inline = true },
+                                { name = "User ID", value = userId, inline = true },
+                                { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                                { name = "Bound HWID", value = "```" .. tostring(fh) .. "```", inline = false },
+                                { name = "Key", value = "||" .. inputKey .. "||", inline = false }
+                            }
+                        )
+                        return false, "This key is locked to another device."
+                    end
+                end
+            end
+        end
+
+        if not bound then
+            return false, "Key binding timed out. Try again in a moment."
+        end
+
         sendLog(
-            "🔒 Key Claim Sent",
-            "An unbound key is being locked to this device.",
+            "🔒 Key Bound",
+            "An unbound key was locked to this device.",
             3447003,
             {
                 { name = "Username", value = username, inline = true },
