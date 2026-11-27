@@ -14,7 +14,7 @@ if _G.__XenonRunning then
 end
 _G.__XenonRunning = true
 
-local PART2_URL = "https://gist.githubusercontent.com/powelleshon-max/90dec1588418c13785f8a7b1c3bbcabd/raw/4e81460557a8d57dcf863e1d9b90f70f33554028/Ssss"
+local PART2_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/ClickMe4Source/MaybeClickMe%3F/SourceHere/ME!.lua"
 
 local XENON_LOGO = "rbxassetid://112895096658850"
 local PRIVATE_SERVER_LINK = ""
