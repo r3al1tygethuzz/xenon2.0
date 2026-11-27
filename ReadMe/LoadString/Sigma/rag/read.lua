@@ -1,8 +1,3 @@
-Here is the updated script. I have removed the **"Always"** mode since it didn't have a keybind and was functionally redundant. The Aim Activation Mode dropdown now only contains **Toggle** and **Hold**, both of which utilize the Keybind button. 
-
-All other features remain fully intact.
-
-```lua
 --made by GUARDIAN
 -- to open, right shift sweetie
 
@@ -1525,4 +1520,3 @@ localPlayer.CharacterRemoving:Connect(function()
 end)
 
 print("lel ez scripts")
-```
