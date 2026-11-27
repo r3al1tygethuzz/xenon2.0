@@ -3,6 +3,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
+local TARGET_PLACE_ID = 140374914197602 -- Speed Clicker
+if game.PlaceId ~= TARGET_PLACE_ID then
+	warn("[Xenon] Wrong game. This script only runs in Speed Clicker (PlaceId " .. TARGET_PLACE_ID .. ").")
+	return
+end
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -32,6 +38,26 @@ local FLY_SPEED = 50
 local FLY_SMOOTHING = 8 -- higher = snappier, lower = floatier
 local flyVelocity = Vector3.new(0, 0, 0)
 
+local theme = {
+	bg = Color3.fromRGB(17, 19, 27),
+	card = Color3.fromRGB(29, 33, 45),
+	cardAlt = Color3.fromRGB(37, 42, 58),
+	cardHover = Color3.fromRGB(48, 55, 76),
+	stroke = Color3.fromRGB(60, 69, 92),
+	text = Color3.fromRGB(238, 241, 248),
+	muted = Color3.fromRGB(151, 160, 180),
+	accent = Color3.fromRGB(96, 130, 255),
+	accentAlt = Color3.fromRGB(130, 100, 255),
+	green = Color3.fromRGB(64, 190, 110),
+	red = Color3.fromRGB(210, 78, 78),
+	amber = Color3.fromRGB(255, 183, 94),
+	tabActive = Color3.fromRGB(84, 118, 222),
+	tabInactive = Color3.fromRGB(36, 41, 56),
+}
+
+local activeTab = "Main"
+local guiVisible = true
+
 local function make(className, props, children)
 	local obj = Instance.new(className)
 	for k, v in pairs(props or {}) do
@@ -50,127 +76,380 @@ local screenGui = make("ScreenGui", {
 	Parent = playerGui,
 })
 
-local main = make("Frame", {
-	Name = "Main",
-	Size = UDim2.new(0, 280, 0, 360),
-	Position = UDim2.new(0, 16, 0.5, -180),
-	BackgroundColor3 = Color3.fromRGB(22, 24, 30),
+local WINDOW_W, WINDOW_H = 300, 470
+local window = make("Frame", {
+	Name = "Window",
+	Size = UDim2.new(0, WINDOW_W, 0, WINDOW_H),
+	Position = UDim2.new(0, 16, 0.5, -WINDOW_H / 2),
+	BackgroundColor3 = theme.bg,
 	BorderSizePixel = 0,
 	Active = true,
 	Parent = screenGui,
 }, {
-	make("UICorner", { CornerRadius = UDim.new(0, 10) }),
-	make("UIStroke", { Color = Color3.fromRGB(60, 70, 90), Thickness = 1 }),
+	make("UICorner", { CornerRadius = UDim.new(0, 12) }),
+	make("UIStroke", { Color = theme.stroke, Thickness = 1 }),
 })
 
+-- Accent strip along the top of the window.
+make("Frame", {
+	Name = "Accent",
+	Size = UDim2.new(1, 0, 0, 3),
+	BackgroundColor3 = theme.accent,
+	BorderSizePixel = 0,
+	Parent = window,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 3) }) })
+
 make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 40),
-	Position = UDim2.new(0, 10, 0, 0),
+	Size = UDim2.new(1, -24, 0, 28),
+	Position = UDim2.new(0, 12, 0, 12),
 	BackgroundTransparency = 1,
 	Text = "Xenon",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
+	TextColor3 = theme.text,
 	Font = Enum.Font.GothamBold,
-	TextSize = 17,
+	TextSize = 20,
 	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = main,
+	Parent = window,
 })
 
 make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 18),
-	Position = UDim2.new(0, 10, 0, 34),
+	Size = UDim2.new(1, -24, 0, 16),
+	Position = UDim2.new(0, 12, 0, 40),
 	BackgroundTransparency = 1,
-	Text = "F:Speed R:Rebirth T:Fly N:Noclip Shift:GUI",
-	TextColor3 = Color3.fromRGB(150, 160, 175),
+	Text = "F Speed | R Rebirth | T Fly | N Noclip | Shift GUI",
+	TextColor3 = theme.muted,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
 	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = main,
+	Parent = window,
 })
-
-local statusLabel = make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 20),
-	Position = UDim2.new(0, 10, 1, -28),
-	BackgroundTransparency = 1,
-	Text = "Status: Ready",
-	TextColor3 = Color3.fromRGB(140, 200, 140),
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = main,
-})
-
-local function setStatus(msg)
-	statusLabel.Text = "Status: " .. msg
-end
 
 -- ===== Tabs: Main / TPs =====
 local tabBar = make("Frame", {
 	Name = "TabBar",
-	Size = UDim2.new(0, 280, 0, 28),
-	Position = UDim2.new(0, 16, 0.5, -214), -- sits just above the main panel
-	BackgroundColor3 = Color3.fromRGB(22, 24, 30),
+	Size = UDim2.new(1, -24, 0, 30),
+	Position = UDim2.new(0, 12, 0, 66),
+	BackgroundColor3 = theme.card,
 	BorderSizePixel = 0,
-	Parent = screenGui,
+	Parent = window,
 }, {
 	make("UICorner", { CornerRadius = UDim.new(0, 8) }),
-	make("UIStroke", { Color = Color3.fromRGB(60, 70, 90), Thickness = 1 }),
+	make("UIStroke", { Color = theme.stroke, Thickness = 1 }),
 })
 
 local mainTabBtn = make("TextButton", {
-	Size = UDim2.new(0.5, -3, 1, 0),
-	Position = UDim2.new(0, 2, 0, 0),
-	BackgroundColor3 = Color3.fromRGB(70, 110, 180),
+	Size = UDim2.new(0.5, -2, 1, -4),
+	Position = UDim2.new(0, 2, 0, 2),
+	BackgroundColor3 = theme.tabActive,
 	BorderSizePixel = 0,
 	Text = "Main",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
+	TextColor3 = theme.text,
 	Font = Enum.Font.GothamBold,
 	TextSize = 12,
 	Parent = tabBar,
 }, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
 
 local tpTabBtn = make("TextButton", {
-	Size = UDim2.new(0.5, -3, 1, 0),
-	Position = UDim2.new(0.5, 1, 0, 0),
-	BackgroundColor3 = Color3.fromRGB(35, 40, 52),
+	Size = UDim2.new(0.5, -2, 1, -4),
+	Position = UDim2.new(0.5, 0, 0, 2),
+	BackgroundColor3 = theme.tabInactive,
 	BorderSizePixel = 0,
 	Text = "TPs",
-	TextColor3 = Color3.fromRGB(200, 205, 215),
+	TextColor3 = theme.muted,
 	Font = Enum.Font.GothamBold,
 	TextSize = 12,
 	Parent = tabBar,
 }, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
 
-local tpFrame = make("Frame", {
-	Name = "TPs",
-	Size = UDim2.new(0, 280, 0, 360),
-	Position = UDim2.new(0, 16, 0.5, -180),
-	BackgroundColor3 = Color3.fromRGB(22, 24, 30),
-	BorderSizePixel = 0,
-	Active = true,
-	Visible = false,
-	Parent = screenGui,
-}, {
-	make("UICorner", { CornerRadius = UDim.new(0, 10) }),
-	make("UIStroke", { Color = Color3.fromRGB(60, 70, 90), Thickness = 1 }),
+mainTabBtn.MouseEnter:Connect(function()
+	if activeTab ~= "Main" then mainTabBtn.BackgroundColor3 = theme.cardAlt end
+end)
+mainTabBtn.MouseLeave:Connect(function()
+	mainTabBtn.BackgroundColor3 = activeTab == "Main" and theme.tabActive or theme.tabInactive
+end)
+tpTabBtn.MouseEnter:Connect(function()
+	if activeTab ~= "TPs" then tpTabBtn.BackgroundColor3 = theme.cardAlt end
+end)
+tpTabBtn.MouseLeave:Connect(function()
+	tpTabBtn.BackgroundColor3 = activeTab == "TPs" and theme.tabActive or theme.tabInactive
+end)
+
+local content = make("Frame", {
+	Name = "Content",
+	Size = UDim2.new(1, -24, 1, -150),
+	Position = UDim2.new(0, 12, 0, 102),
+	BackgroundTransparency = 1,
+	Parent = window,
 })
 
-make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 22),
-	Position = UDim2.new(0, 10, 0, 8),
+local main = make("Frame", {
+	Name = "Main",
+	Size = UDim2.new(1, 0, 1, 0),
 	BackgroundTransparency = 1,
-	Text = "Teleports",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
+	Active = true,
+	Parent = content,
+})
+
+local tpFrame = make("Frame", {
+	Name = "TPs",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Active = true,
+	Visible = false,
+	Parent = content,
+})
+
+-- Footer / status bar
+local footer = make("Frame", {
+	Name = "Footer",
+	Size = UDim2.new(1, -24, 0, 28),
+	Position = UDim2.new(0, 12, 1, -34),
+	BackgroundColor3 = theme.card,
+	BorderSizePixel = 0,
+	Parent = window,
+}, {
+	make("UICorner", { CornerRadius = UDim.new(0, 8) }),
+	make("UIStroke", { Color = theme.stroke, Thickness = 1 }),
+})
+
+local statusDot = make("Frame", {
+	Size = UDim2.new(0, 6, 0, 6),
+	Position = UDim2.new(0, 12, 0.5, -3),
+	BackgroundColor3 = theme.green,
+	BorderSizePixel = 0,
+	Parent = footer,
+}, { make("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+
+local statusLabel = make("TextLabel", {
+	Size = UDim2.new(1, -38, 1, 0),
+	Position = UDim2.new(0, 26, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Status: Ready",
+	TextColor3 = theme.muted,
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = footer,
+})
+
+local function setStatus(msg)
+	statusLabel.Text = "Status: " .. msg
+end
+
+local function sectionLabel(parent, text, y)
+	return make("TextLabel", {
+		Size = UDim2.new(1, -4, 0, 16),
+		Position = UDim2.new(0, 2, 0, y),
+		BackgroundTransparency = 1,
+		Text = text,
+		TextColor3 = theme.muted,
+		Font = Enum.Font.GothamBold,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = parent,
+	})
+end
+
+local function makeRow(parent, y, labelText, labelWidth)
+	local row = make("Frame", {
+		Size = UDim2.new(1, -4, 0, 34),
+		Position = UDim2.new(0, 2, 0, y),
+		BackgroundColor3 = theme.card,
+		BorderSizePixel = 0,
+		Parent = parent,
+	}, {
+		make("UICorner", { CornerRadius = UDim.new(0, 8) }),
+		make("UIStroke", { Color = theme.stroke, Thickness = 1, Transparency = 0.35 }),
+	})
+
+	make("TextLabel", {
+		Size = UDim2.new(0, labelWidth, 1, 0),
+		Position = UDim2.new(0, 10, 0, 0),
+		BackgroundTransparency = 1,
+		Text = labelText,
+		TextColor3 = theme.text,
+		Font = Enum.Font.GothamSemibold,
+		TextSize = 12,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Parent = row,
+	})
+
+	return row
+end
+
+local function makeToggle(parent, initialText, initialColor)
+	return make("TextButton", {
+		Size = UDim2.new(0, 58, 0, 26),
+		Position = UDim2.new(1, -64, 0.5, -13),
+		BackgroundColor3 = initialColor,
+		BorderSizePixel = 0,
+		Text = initialText,
+		TextColor3 = theme.text,
+		Font = Enum.Font.GothamBold,
+		TextSize = 12,
+		Parent = parent,
+	}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+end
+
+-- ===== Main tab controls =====
+sectionLabel(main, "AUTOMATION", 2)
+
+local speedRow = makeRow(main, 22, "Auto Speed", 150)
+local speedBtn = makeToggle(speedRow, "ON", theme.green)
+
+local delayRow = makeRow(main, 62, "Speed Delay", 96)
+local delayBox = make("TextBox", {
+	Size = UDim2.new(0, 70, 0, 24),
+	Position = UDim2.new(1, -78, 0.5, -12),
+	BackgroundColor3 = theme.cardAlt,
+	BorderSizePixel = 0,
+	Text = tostring(state.SpeedDelay),
+	TextColor3 = theme.text,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	ClearTextOnFocus = false,
+	Parent = delayRow,
+}, {
+	make("UICorner", { CornerRadius = UDim.new(0, 6) }),
+	make("UIStroke", { Color = theme.stroke, Thickness = 1, Transparency = 0.5 }),
+})
+
+delayBox.FocusLost:Connect(function()
+	local n = tonumber(delayBox.Text)
+	if n then
+		state.SpeedDelay = math.clamp(n, 0, 5)
+	end
+	delayBox.Text = tostring(state.SpeedDelay)
+	setStatus("Speed delay: " .. state.SpeedDelay)
+end)
+
+local rebirthRow = makeRow(main, 102, "Auto Rebirth", 112)
+local nowBtn = make("TextButton", {
+	Size = UDim2.new(0, 44, 0, 26),
+	Position = UDim2.new(1, -114, 0.5, -13),
+	BackgroundColor3 = theme.tabActive,
+	BorderSizePixel = 0,
+	Text = "NOW",
+	TextColor3 = theme.text,
 	Font = Enum.Font.GothamBold,
-	TextSize = 16,
+	TextSize = 11,
+	Parent = rebirthRow,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+local rebirthBtn = makeToggle(rebirthRow, "OFF", theme.red)
+
+local rebirthInfo = make("TextLabel", {
+	Size = UDim2.new(1, -4, 0, 22),
+	Position = UDim2.new(0, 2, 0, 142),
+	BackgroundColor3 = theme.cardAlt,
+	BorderSizePixel = 0,
+	Text = "Rebirth: loading...",
+	TextColor3 = theme.muted,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = main,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+sectionLabel(main, "MOVEMENT", 174)
+
+local flyRow = makeRow(main, 194, "Fly (WASD / Space / Ctrl)", 176)
+local flyBtn = makeToggle(flyRow, "OFF", theme.red)
+
+local noclipRow = makeRow(main, 234, "Noclip", 150)
+local noclipBtn = makeToggle(noclipRow, "OFF", theme.red)
+
+local flySpeedRow = makeRow(main, 274, "Fly Speed", 96)
+local flySpeedBox = make("TextBox", {
+	Size = UDim2.new(0, 70, 0, 24),
+	Position = UDim2.new(1, -78, 0.5, -12),
+	BackgroundColor3 = theme.cardAlt,
+	BorderSizePixel = 0,
+	Text = tostring(FLY_SPEED),
+	TextColor3 = theme.text,
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	ClearTextOnFocus = false,
+	Parent = flySpeedRow,
+}, {
+	make("UICorner", { CornerRadius = UDim.new(0, 6) }),
+	make("UIStroke", { Color = theme.stroke, Thickness = 1, Transparency = 0.5 }),
+})
+
+flySpeedBox.FocusLost:Connect(function()
+	local n = tonumber(flySpeedBox.Text)
+	if n then
+		FLY_SPEED = math.clamp(n, 1, 300)
+	end
+	flySpeedBox.Text = tostring(FLY_SPEED)
+	setStatus("Fly speed: " .. FLY_SPEED)
+end)
+
+-- ===== TPs tab =====
+make("TextLabel", {
+	Size = UDim2.new(1, -8, 0, 20),
+	Position = UDim2.new(0, 4, 0, 2),
+	BackgroundTransparency = 1,
+	Text = "Teleport locations",
+	TextColor3 = theme.text,
+	Font = Enum.Font.GothamBold,
+	TextSize = 13,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = tpFrame,
 })
 
-local teleports = {
-	{ label = "TP 1", pos = Vector3.new(15814, 0, -34889) },
-	{ label = "TP 2", pos = Vector3.new(15934, 0, -34888) },
-	{ label = "TP 3", pos = Vector3.new(15815, 0, 55220) },
-	{ label = "TP 4", pos = Vector3.new(15939, 0, 55214) },
+local tpList = make("ScrollingFrame", {
+	Name = "TPList",
+	Size = UDim2.new(1, -4, 1, -28),
+	Position = UDim2.new(0, 2, 0, 26),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 6,
+	ScrollBarImageColor3 = theme.accent,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	CanvasSize = UDim2.new(0, 0, 0, 0),
+	Parent = tpFrame,
+}, {
+	make("UIPadding", {
+		PaddingLeft = UDim.new(0, 4),
+		PaddingRight = UDim.new(0, 8),
+		PaddingTop = UDim.new(0, 2),
+		PaddingBottom = UDim.new(0, 8),
+	}),
+	make("UIListLayout", {
+		Padding = UDim.new(0, 8),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}),
+})
+
+local teleportGroups = {
+	{
+		name = "Map 1 TPs",
+		points = {
+			{ label = "Map 1 TP 1", pos = Vector3.new(578, 414, 11778) },
+			{ label = "Map 1 TP 2", pos = Vector3.new(453, 0, 10793) },
+			{ label = "Map 1 TP 3", pos = Vector3.new(575, 0, 8937) },
+			{ label = "Map 1 TP 4", pos = Vector3.new(453, 0, 8480) },
+		},
+	},
+	{
+		name = "Map 2 TPs",
+		points = {
+			{ label = "Map 2 TP 1", pos = Vector3.new(1476, 0, 9497) },
+			{ label = "Map 2 TP 2", pos = Vector3.new(1599, 0, 9099) },
+			{ label = "Map 2 TP 3", pos = Vector3.new(1603, 0, 10865) },
+			{ label = "Map 2 TP 4", pos = Vector3.new(1478, 0, 10639) },
+		},
+	},
+	{
+		name = "Other TPs",
+		points = {
+			{ label = "TP 1", pos = Vector3.new(15814, 0, -34889) },
+			{ label = "TP 2", pos = Vector3.new(15934, 0, -34888) },
+			{ label = "TP 3", pos = Vector3.new(15815, 0, 55220) },
+			{ label = "TP 4", pos = Vector3.new(15939, 0, 55214) },
+		},
+	},
 }
 
 local function teleportTo(pos, label)
@@ -196,81 +475,113 @@ local function teleportTo(pos, label)
 	return ok
 end
 
-for i, tp in ipairs(teleports) do
-	local btn = make("TextButton", {
-		Size = UDim2.new(1, -20, 0, 32),
-		Position = UDim2.new(0, 10, 0, 36 + (i - 1) * 40),
-		BackgroundColor3 = Color3.fromRGB(45, 70, 120),
-		BorderSizePixel = 0,
-		Text = tp.label .. "  |  " .. tp.pos.X .. ", " .. tp.pos.Y .. ", " .. tp.pos.Z,
-		TextColor3 = Color3.fromRGB(255, 255, 255),
-		Font = Enum.Font.Gotham,
-		TextSize = 11,
-		Parent = tpFrame,
-	}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+local order = 0
+local function nextOrder()
+	order += 1
+	return order
+end
 
-	btn.MouseButton1Click:Connect(function()
-		teleportTo(tp.pos, tp.label)
-	end)
+for _, group in ipairs(teleportGroups) do
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 18),
+		BackgroundTransparency = 1,
+		Text = group.name,
+		TextColor3 = theme.accent,
+		Font = Enum.Font.GothamBold,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		LayoutOrder = nextOrder(),
+		Parent = tpList,
+	})
+
+	for _, tp in ipairs(group.points) do
+		local btn = make("TextButton", {
+			Size = UDim2.new(1, 0, 0, 34),
+			BackgroundColor3 = theme.cardAlt,
+			BorderSizePixel = 0,
+			Text = tp.label .. "  |  " .. tp.pos.X .. ", " .. tp.pos.Y .. ", " .. tp.pos.Z,
+			TextColor3 = theme.text,
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			LayoutOrder = nextOrder(),
+			Parent = tpList,
+		}, {
+			make("UICorner", { CornerRadius = UDim.new(0, 7) }),
+			make("UIStroke", { Color = theme.stroke, Thickness = 1, Transparency = 0.4 }),
+		})
+
+		btn.MouseEnter:Connect(function() btn.BackgroundColor3 = theme.cardHover end)
+		btn.MouseLeave:Connect(function() btn.BackgroundColor3 = theme.cardAlt end)
+		btn.MouseButton1Click:Connect(function()
+			teleportTo(tp.pos, tp.label)
+		end)
+	end
 end
 
 make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 30),
-	Position = UDim2.new(0, 10, 0, 206),
-	BackgroundTransparency = 1,
+	Size = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = theme.card,
+	BorderSizePixel = 0,
 	Text = "If the server snaps you back, turn off Fly and try again.",
-	TextColor3 = Color3.fromRGB(150, 160, 175),
+	TextColor3 = theme.muted,
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = tpFrame,
-})
+	TextWrapped = true,
+	LayoutOrder = nextOrder(),
+	Parent = tpList,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 7) }) })
 
-local activeTab = "Main"
-local guiVisible = true
+make("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 34),
+	BackgroundColor3 = Color3.fromRGB(53, 42, 32),
+	BorderSizePixel = 0,
+	Text = "You cannot TP to these wins unless you have the map unlocked.",
+	TextColor3 = theme.amber,
+	Font = Enum.Font.Gotham,
+	TextSize = 10,
+	TextWrapped = true,
+	LayoutOrder = nextOrder(),
+	Parent = tpList,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 7) }) })
 
 local function switchTab(name)
 	activeTab = name
-	main.Visible = guiVisible and name == "Main"
-	tpFrame.Visible = guiVisible and name == "TPs"
-	mainTabBtn.BackgroundColor3 = name == "Main" and Color3.fromRGB(70, 110, 180) or Color3.fromRGB(35, 40, 52)
-	tpTabBtn.BackgroundColor3 = name == "TPs" and Color3.fromRGB(70, 110, 180) or Color3.fromRGB(35, 40, 52)
+	main.Visible = name == "Main"
+	tpFrame.Visible = name == "TPs"
+	mainTabBtn.BackgroundColor3 = name == "Main" and theme.tabActive or theme.tabInactive
+	tpTabBtn.BackgroundColor3 = name == "TPs" and theme.tabActive or theme.tabInactive
+	mainTabBtn.TextColor3 = name == "Main" and theme.text or theme.muted
+	tpTabBtn.TextColor3 = name == "TPs" and theme.text or theme.muted
 end
 
 local function setGuiVisible(visible)
 	guiVisible = visible
-	tabBar.Visible = visible
-	main.Visible = visible and activeTab == "Main"
-	tpFrame.Visible = visible and activeTab == "TPs"
+	window.Visible = visible
 end
 
 mainTabBtn.MouseButton1Click:Connect(function() switchTab("Main") end)
 tpTabBtn.MouseButton1Click:Connect(function() switchTab("TPs") end)
 switchTab("Main")
 
--- Drag (all panels move together)
+-- Drag (the whole window moves as one)
 do
-	local panels = { main, tpFrame, tabBar }
 	local dragging, dragStart, startPos
-	for _, frame in ipairs(panels) do
-		frame.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				dragging = true
-				dragStart = input.Position
-				startPos = {}
-				for _, p in ipairs(panels) do
-					startPos[p] = p.Position
-				end
-			end
-		end)
-	end
+	window.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = window.Position
+		end
+	end)
 	UserInputService.InputChanged:Connect(function(input)
 		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
-			for _, p in ipairs(panels) do
-				local sp = startPos[p]
-				p.Position = UDim2.new(sp.X.Scale, sp.X.Offset + delta.X, sp.Y.Scale, sp.Y.Offset + delta.Y)
-			end
+			window.Position = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
 		end
 	end)
 	UserInputService.InputEnded:Connect(function(input)
@@ -280,42 +591,9 @@ do
 	end)
 end
 
--- Auto Speed toggle
-local row = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 58),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(1, -80, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Auto Speed",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = row,
-})
-
-local speedBtn = make("TextButton", {
-	Size = UDim2.new(0, 56, 0, 24),
-	Position = UDim2.new(1, -64, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(50, 180, 90),
-	BorderSizePixel = 0,
-	Text = "ON",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	Parent = row,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
 local function refreshSpeed()
 	speedBtn.Text = state.AutoSpeed and "ON" or "OFF"
-	speedBtn.BackgroundColor3 = state.AutoSpeed and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
+	speedBtn.BackgroundColor3 = state.AutoSpeed and theme.green or theme.red
 end
 
 speedBtn.MouseButton1Click:Connect(function()
@@ -324,229 +602,26 @@ speedBtn.MouseButton1Click:Connect(function()
 	setStatus("Auto Speed: " .. (state.AutoSpeed and "ON" or "OFF"))
 end)
 
--- Speed delay control
-local delayRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 98),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(0, 90, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Speed Delay",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = delayRow,
-})
-
-local delayBox = make("TextBox", {
-	Size = UDim2.new(0, 70, 0, 24),
-	Position = UDim2.new(1, -78, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(45, 48, 58),
-	BorderSizePixel = 0,
-	Text = tostring(state.SpeedDelay),
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	ClearTextOnFocus = false,
-	Parent = delayRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-delayBox.FocusLost:Connect(function()
-	local n = tonumber(delayBox.Text)
-	if n then
-		state.SpeedDelay = math.clamp(n, 0, 5)
-	end
-	delayBox.Text = tostring(state.SpeedDelay)
-	setStatus("Speed delay: " .. state.SpeedDelay)
-end)
-
--- Auto Rebirth toggle + manual fire
-local rebirthRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 138),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(0, 112, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Auto Rebirth",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = rebirthRow,
-})
-
-local nowBtn = make("TextButton", {
-	Size = UDim2.new(0, 46, 0, 24),
-	Position = UDim2.new(1, -116, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(70, 110, 180),
-	BorderSizePixel = 0,
-	Text = "NOW",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 11,
-	Parent = rebirthRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-local rebirthBtn = make("TextButton", {
-	Size = UDim2.new(0, 56, 0, 24),
-	Position = UDim2.new(1, -64, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(180, 60, 60),
-	BorderSizePixel = 0,
-	Text = "OFF",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	Parent = rebirthRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-local rebirthInfo = make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 16),
-	Position = UDim2.new(0, 10, 0, 176),
-	BackgroundTransparency = 1,
-	Text = "Rebirth: loading...",
-	TextColor3 = Color3.fromRGB(170, 180, 200),
-	Font = Enum.Font.Gotham,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = main,
-})
-
 local function refreshRebirth()
 	rebirthBtn.Text = state.AutoRebirth and "ON" or "OFF"
-	rebirthBtn.BackgroundColor3 = state.AutoRebirth and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
+	rebirthBtn.BackgroundColor3 = state.AutoRebirth and theme.green or theme.red
 end
 
--- Fly toggle
-local flyRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 196),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(1, -80, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Fly (WASD / Space / Ctrl)",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 12,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = flyRow,
-})
-
-local flyBtn = make("TextButton", {
-	Size = UDim2.new(0, 56, 0, 24),
-	Position = UDim2.new(1, -64, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(180, 60, 60),
-	BorderSizePixel = 0,
-	Text = "OFF",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	Parent = flyRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
--- Noclip toggle
-local noclipRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 234),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(1, -80, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Noclip",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = noclipRow,
-})
-
-local noclipBtn = make("TextButton", {
-	Size = UDim2.new(0, 56, 0, 24),
-	Position = UDim2.new(1, -64, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(180, 60, 60),
-	BorderSizePixel = 0,
-	Text = "OFF",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	Parent = noclipRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
--- Fly speed control
-local flySpeedRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 272),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(0, 90, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Fly Speed",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = flySpeedRow,
-})
-
-local flySpeedBox = make("TextBox", {
-	Size = UDim2.new(0, 70, 0, 24),
-	Position = UDim2.new(1, -78, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(45, 48, 58),
-	BorderSizePixel = 0,
-	Text = tostring(FLY_SPEED),
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.Gotham,
-	TextSize = 12,
-	ClearTextOnFocus = false,
-	Parent = flySpeedRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-flySpeedBox.FocusLost:Connect(function()
-	local n = tonumber(flySpeedBox.Text)
-	if n then
-		FLY_SPEED = math.clamp(n, 1, 300)
-	end
-	flySpeedBox.Text = tostring(FLY_SPEED)
-	setStatus("Fly speed: " .. FLY_SPEED)
+rebirthBtn.MouseButton1Click:Connect(function()
+	state.AutoRebirth = not state.AutoRebirth
+	refreshRebirth()
+	setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
 end)
 
 -- Fly / Noclip
 local function refreshFly()
 	flyBtn.Text = state.Fly and "ON" or "OFF"
-	flyBtn.BackgroundColor3 = state.Fly and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
+	flyBtn.BackgroundColor3 = state.Fly and theme.green or theme.red
 end
 
 local function refreshNoclip()
 	noclipBtn.Text = state.Noclip and "ON" or "OFF"
-	noclipBtn.BackgroundColor3 = state.Noclip and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
+	noclipBtn.BackgroundColor3 = state.Noclip and theme.green or theme.red
 end
 
 local function stopFly()
@@ -748,12 +823,6 @@ local function fireRebirth(manual)
 	rebirthBusy = false
 	return ok
 end
-
-rebirthBtn.MouseButton1Click:Connect(function()
-	state.AutoRebirth = not state.AutoRebirth
-	refreshRebirth()
-	setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
-end)
 
 nowBtn.MouseButton1Click:Connect(function()
 	fireRebirth(true)
