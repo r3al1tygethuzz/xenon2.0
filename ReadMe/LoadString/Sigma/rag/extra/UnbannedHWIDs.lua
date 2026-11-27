@@ -167,10 +167,10 @@ make("TextLabel", {
 })
 
 local teleports = {
-	{ label = "TP 1", pos = Vector3.new(13763, 0, -18525) },
-	{ label = "TP 2", pos = Vector3.new(13888, 0, -18530) },
-	{ label = "TP 3", pos = Vector3.new(13892, 0, 38846) },
-	{ label = "TP 4", pos = Vector3.new(13768, 0, 38864) },
+	{ label = "TP 1", pos = Vector3.new(15814, 0, -34889) },
+	{ label = "TP 2", pos = Vector3.new(15934, 0, -34888) },
+	{ label = "TP 3", pos = Vector3.new(15815, 0, 55220) },
+	{ label = "TP 4", pos = Vector3.new(15939, 0, 55214) },
 }
 
 local function teleportTo(pos, label)
