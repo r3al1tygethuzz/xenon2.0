@@ -13,7 +13,8 @@ local state = {
 
 local TOGGLE_SPEED_KEY = Enum.KeyCode.F
 local TOGGLE_REBIRTH_KEY = Enum.KeyCode.R
-local TOGGLE_GUI_KEY = Enum.KeyCode.RightShift
+local TOGGLE_GUI_KEY = Enum.KeyCode.LeftShift
+local TOGGLE_GUI_ALT_KEY = Enum.KeyCode.RightShift -- keep the old key working too
 
 -- Rebirth references (filled in by the setup task below)
 local RebirthData, RewardCalc, RebirthEvent, leaderstats, RebirthValue, statValue
@@ -66,7 +67,7 @@ make("TextLabel", {
 	Size = UDim2.new(1, -20, 0, 18),
 	Position = UDim2.new(0, 10, 0, 34),
 	BackgroundTransparency = 1,
-	Text = "F: Speed | R: Auto Rebirth | RightShift: Hide GUI",
+	Text = "F: Speed | R: Auto Rebirth | Shift: Show/Hide GUI",
 	TextColor3 = Color3.fromRGB(150, 160, 175),
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
@@ -313,6 +314,13 @@ end)
 
 -- Keybinds
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	-- Handle the GUI key BEFORE the gameProcessed check.
+	-- LeftShift is often consumed by the game (sprint), which sets gameProcessed = true.
+	if input.KeyCode == TOGGLE_GUI_KEY or input.KeyCode == TOGGLE_GUI_ALT_KEY then
+		main.Visible = not main.Visible
+		return
+	end
+
 	if gameProcessed then return end
 	if input.KeyCode == TOGGLE_SPEED_KEY then
 		state.AutoSpeed = not state.AutoSpeed
@@ -322,8 +330,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		state.AutoRebirth = not state.AutoRebirth
 		refreshRebirth()
 		setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
-	elseif input.KeyCode == TOGGLE_GUI_KEY then
-		main.Visible = not main.Visible
 	end
 end)
 
@@ -405,4 +411,4 @@ task.spawn(function()
 end)
 
 setStatus("Loaded")
-print("[Xeon Auto Speed] Loaded. F = speed, R = auto rebirth, RightShift = hide GUI")
+print("[Xeon Auto Speed] Loaded. F = speed, R = auto rebirth, LeftShift/RightShift = show/hide GUI")
