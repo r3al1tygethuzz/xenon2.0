@@ -280,7 +280,10 @@ local function loadMainScript()
                 { name = "Error", value = tostring(result), inline = false }
             }
         )
+        return false
     end
+
+    return true
 end
 
 --//==================================================
@@ -328,17 +331,26 @@ end
 --// ALREADY VERIFIED THIS SESSION → SKIP UI
 --//==================================================
 if getgenv().XenonKeyVerified == true then
-    loadMainScript()
-    return
+    local ok = loadMainScript()
+    if ok then
+        return
+    end
+    -- Main script failed; fall through to the key UI.
+    getgenv().XenonKeyVerified = nil
 end
 
 local savedKey = loadSavedKey()
 if savedKey then
-    local valid, message = verifyKey(savedKey)
-    if valid then
+    local ok, valid, message = pcall(function()
+        return verifyKey(savedKey)
+    end)
+    if ok and valid then
         getgenv().XenonKeyVerified = true
-        loadMainScript()
-        return
+        local loaded = loadMainScript()
+        if loaded then
+            return
+        end
+        getgenv().XenonKeyVerified = nil
     end
 end
 
@@ -1083,7 +1095,12 @@ local function performVerification()
     task.wait(0.7)
     gui:Destroy()
 
-    loadMainScript()
+    local loaded = loadMainScript()
+    if not loaded then
+        -- Show an error but keep the UI gone; user can re-inject.
+        warn("[KeySystem] Main script failed to load after verification.")
+    end
+    return
 end
 
 verifyButton.MouseButton1Click:Connect(performVerification)
