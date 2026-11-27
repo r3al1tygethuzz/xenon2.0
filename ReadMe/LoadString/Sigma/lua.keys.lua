@@ -284,11 +284,62 @@ local function loadMainScript()
 end
 
 --//==================================================
+--// AUTO-OPEN INVITE ON INJECT
+--//==================================================
+pcall(function()
+    if setclipboard then
+        setclipboard("https://discord.gg/NVKj9pMxHs")
+    end
+end)
+
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Xenon",
+        Text = "Join discord.gg/NVKj9pMxHs",
+        Duration = 8
+    })
+end)
+
+--//==================================================
+--// REMEMBER KEY (persist across sessions)
+--//==================================================
+local function loadSavedKey()
+    local ok, value = pcall(function()
+        if readfile and isfile and isfile("xenon_key.txt") then
+            return readfile("xenon_key.txt")
+        end
+        return nil
+    end)
+    if ok and type(value) == "string" and value ~= "" then
+        return value
+    end
+    return nil
+end
+
+local function saveKey(key)
+    pcall(function()
+        if writefile then
+            writefile("xenon_key.txt", key)
+        end
+    end)
+end
+
+--//==================================================
 --// ALREADY VERIFIED THIS SESSION → SKIP UI
 --//==================================================
 if getgenv().XenonKeyVerified == true then
     loadMainScript()
     return
+end
+
+local savedKey = loadSavedKey()
+if savedKey then
+    local valid, message = verifyKey(savedKey)
+    if valid then
+        getgenv().XenonKeyVerified = true
+        loadMainScript()
+        return
+    end
 end
 
 --//==================================================
@@ -436,9 +487,25 @@ local function lookupKey(entries, inputKey)
     return nil, nil
 end
 
+local function currentTime()
+    if DateTime and DateTime.now then
+        local ok, value = pcall(function()
+            return DateTime.now().UnixTimestamp
+        end)
+        if ok and type(value) == "number" and value > 0 then
+            return value
+        end
+    end
+    return os.time()
+end
+
 local function isExpired(entry)
     local expires = tonumber(entry and entry.expires) or 0
-    return expires ~= 0 and os.time() >= expires
+    if expires == 0 then
+        return false
+    end
+    -- Guard against a clock that is behind the key server.
+    return currentTime() >= (expires - 5)
 end
 
 local function claimKey(inputKey)
@@ -455,9 +522,9 @@ local function claimKey(inputKey)
         return false, "network"
     end
 
-    local deadline = os.time() + CLAIM_TIMEOUT
+    local deadline = currentTime() + CLAIM_TIMEOUT
 
-    while os.time() < deadline do
+    while currentTime() < deadline do
         task.wait(CLAIM_POLL_INTERVAL)
 
         local database = loadKeys(true)
@@ -544,7 +611,7 @@ local function verifyKey(inputKey)
             }
         )
 
-        LocalPlayer:Kick("Banned\n\nReason: " .. reason)
+        LocalPlayer:Kick("Xenon HWID Ban - discord.gg/NVKj9pMxHs\n\nReason: " .. reason)
         return false, "Banned: " .. reason
     end
 
@@ -667,7 +734,7 @@ local function verifyKey(inputKey)
         -- We do not block on the bind: the claim is sent best-effort and the
         -- bot records the HWID asynchronously. Access is granted immediately.
         local claimedHash = keyHash(inputKey)
-        local nonce = tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999))
+        local nonce = tostring(currentTime()) .. "-" .. tostring(math.random(100000, 999999))
 
         postWebhook({
             content = CLAIM_PREFIX .. claimedHash .. "|" .. clientId .. "|" .. nonce,
@@ -1010,6 +1077,8 @@ local function performVerification()
     verifyButton.BackgroundColor3 = Color3.fromRGB(50, 105, 75)
 
     getgenv().XenonKeyVerified = true
+
+    saveKey(input.Text)
 
     task.wait(0.7)
     gui:Destroy()
