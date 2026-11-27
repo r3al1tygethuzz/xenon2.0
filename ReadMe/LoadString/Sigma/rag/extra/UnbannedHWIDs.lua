@@ -8,10 +8,16 @@ local playerGui = player:WaitForChild("PlayerGui")
 local state = {
 	AutoSpeed = true,
 	SpeedDelay = 0.02, -- seconds; lower = faster, 0 = every frame
+	AutoRebirth = false,
 }
 
 local TOGGLE_SPEED_KEY = Enum.KeyCode.F
+local TOGGLE_REBIRTH_KEY = Enum.KeyCode.R
 local TOGGLE_GUI_KEY = Enum.KeyCode.RightShift
+
+-- Rebirth references (filled in by the setup task below)
+local RebirthData, RewardCalc, RebirthEvent, leaderstats, RebirthValue, statValue
+local rebirthBusy = false
 
 local function make(className, props, children)
 	local obj = Instance.new(className)
@@ -33,8 +39,8 @@ local screenGui = make("ScreenGui", {
 
 local main = make("Frame", {
 	Name = "Main",
-	Size = UDim2.new(0, 280, 0, 170),
-	Position = UDim2.new(0, 16, 0.5, -85),
+	Size = UDim2.new(0, 280, 0, 220),
+	Position = UDim2.new(0, 16, 0.5, -110),
 	BackgroundColor3 = Color3.fromRGB(22, 24, 30),
 	BorderSizePixel = 0,
 	Active = true,
@@ -48,10 +54,10 @@ make("TextLabel", {
 	Size = UDim2.new(1, -20, 0, 40),
 	Position = UDim2.new(0, 10, 0, 0),
 	BackgroundTransparency = 1,
-	Text = "Xeon Auto Speed",
+	Text = "Xeon Auto Speed + Rebirth",
 	TextColor3 = Color3.fromRGB(255, 255, 255),
 	Font = Enum.Font.GothamBold,
-	TextSize = 18,
+	TextSize = 17,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = main,
 })
@@ -60,10 +66,10 @@ make("TextLabel", {
 	Size = UDim2.new(1, -20, 0, 18),
 	Position = UDim2.new(0, 10, 0, 34),
 	BackgroundTransparency = 1,
-	Text = "F: Speed | RightShift: Hide GUI",
+	Text = "F: Speed | R: Auto Rebirth | RightShift: Hide GUI",
 	TextColor3 = Color3.fromRGB(150, 160, 175),
 	Font = Enum.Font.Gotham,
-	TextSize = 11,
+	TextSize = 10,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Parent = main,
 })
@@ -110,7 +116,7 @@ end
 -- Auto Speed toggle
 local row = make("Frame", {
 	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 62),
+	Position = UDim2.new(0, 10, 0, 58),
 	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
 	BorderSizePixel = 0,
 	Parent = main,
@@ -154,7 +160,7 @@ end)
 -- Speed delay control
 local delayRow = make("Frame", {
 	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 102),
+	Position = UDim2.new(0, 10, 0, 98),
 	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
 	BorderSizePixel = 0,
 	Parent = main,
@@ -194,6 +200,117 @@ delayBox.FocusLost:Connect(function()
 	setStatus("Speed delay: " .. state.SpeedDelay)
 end)
 
+-- Auto Rebirth toggle + manual fire
+local rebirthRow = make("Frame", {
+	Size = UDim2.new(1, -20, 0, 34),
+	Position = UDim2.new(0, 10, 0, 138),
+	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
+	BorderSizePixel = 0,
+	Parent = main,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+make("TextLabel", {
+	Size = UDim2.new(0, 112, 1, 0),
+	Position = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Auto Rebirth",
+	TextColor3 = Color3.fromRGB(235, 235, 235),
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = rebirthRow,
+})
+
+local nowBtn = make("TextButton", {
+	Size = UDim2.new(0, 46, 0, 24),
+	Position = UDim2.new(1, -116, 0.5, -12),
+	BackgroundColor3 = Color3.fromRGB(70, 110, 180),
+	BorderSizePixel = 0,
+	Text = "NOW",
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	Font = Enum.Font.GothamBold,
+	TextSize = 11,
+	Parent = rebirthRow,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+local rebirthBtn = make("TextButton", {
+	Size = UDim2.new(0, 56, 0, 24),
+	Position = UDim2.new(1, -64, 0.5, -12),
+	BackgroundColor3 = Color3.fromRGB(180, 60, 60),
+	BorderSizePixel = 0,
+	Text = "OFF",
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	Font = Enum.Font.GothamBold,
+	TextSize = 12,
+	Parent = rebirthRow,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+local rebirthInfo = make("TextLabel", {
+	Size = UDim2.new(1, -20, 0, 16),
+	Position = UDim2.new(0, 10, 0, 176),
+	BackgroundTransparency = 1,
+	Text = "Rebirth: loading...",
+	TextColor3 = Color3.fromRGB(170, 180, 200),
+	Font = Enum.Font.Gotham,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = main,
+})
+
+local function refreshRebirth()
+	rebirthBtn.Text = state.AutoRebirth and "ON" or "OFF"
+	rebirthBtn.BackgroundColor3 = state.AutoRebirth and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
+end
+
+local function readyToRebirth()
+	local ok, result = pcall(function()
+		return RebirthData ~= nil
+			and type(RebirthData.canRebirth) == "function"
+			and RebirthData.canRebirth(player) == true
+	end)
+	return ok and result == true
+end
+
+local function fireRebirth(manual)
+	if not RebirthEvent then
+		if manual then setStatus("Rebirth not available") end
+		return false
+	end
+	if rebirthBusy then return false end
+	if not readyToRebirth() then
+		if manual then setStatus("Rebirth not ready") end
+		return false
+	end
+
+	rebirthBusy = true
+	local ok = pcall(function()
+		RebirthEvent:FireServer()
+	end)
+	if ok then
+		setStatus("Rebirth requested")
+		-- Wait for the server to apply it so the auto loop doesn't double-fire.
+		local start = os.clock()
+		while readyToRebirth() and os.clock() - start < 2 do
+			task.wait(0.1)
+		end
+		task.wait(0.2)
+	else
+		setStatus("Rebirth fire failed")
+	end
+	rebirthBusy = false
+	return ok
+end
+
+rebirthBtn.MouseButton1Click:Connect(function()
+	state.AutoRebirth = not state.AutoRebirth
+	refreshRebirth()
+	setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
+end)
+
+nowBtn.MouseButton1Click:Connect(function()
+	fireRebirth(true)
+end)
+
 -- Keybinds
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
@@ -201,6 +318,10 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		state.AutoSpeed = not state.AutoSpeed
 		refreshSpeed()
 		setStatus("Auto Speed: " .. (state.AutoSpeed and "ON" or "OFF"))
+	elseif input.KeyCode == TOGGLE_REBIRTH_KEY then
+		state.AutoRebirth = not state.AutoRebirth
+		refreshRebirth()
+		setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
 	elseif input.KeyCode == TOGGLE_GUI_KEY then
 		main.Visible = not main.Visible
 	end
@@ -232,5 +353,56 @@ task.spawn(function()
 	end
 end)
 
+-- Rebirth setup + Auto Rebirth loop
+task.spawn(function()
+	local ok, err = pcall(function()
+		RebirthData = require(ReplicatedStorage:WaitForChild("RebirthData", 10))
+		RewardCalc = require(ReplicatedStorage:WaitForChild("RewardCalc", 10))
+		RebirthEvent = ReplicatedStorage:WaitForChild("RebirthEvent", 10)
+		leaderstats = player:WaitForChild("leaderstats", 10)
+		RebirthValue = leaderstats:WaitForChild("Rebirth", 10)
+		statValue = leaderstats:WaitForChild(RebirthData.STAT, 10)
+	end)
+
+	if not ok or not RebirthData or not RebirthEvent or not RebirthValue or not statValue then
+		warn("[Xeon Auto Speed] Rebirth setup failed: " .. tostring(err))
+		rebirthInfo.Text = "Rebirth: not available"
+		setStatus("Rebirth not found")
+		return
+	end
+
+	setStatus("Rebirth ready")
+	print("[Xeon Auto Speed] Rebirth ready. Stat: " .. tostring(RebirthData.STAT))
+
+	local function fmt(n)
+		n = math.floor(n)
+		if RewardCalc and type(RewardCalc.roundNumber) == "function" then
+			return tostring(RewardCalc.roundNumber(n))
+		end
+		return tostring(n)
+	end
+
+	local function updateInfo()
+		local okInfo, req = pcall(function()
+			return RebirthData.requiredFor(RebirthValue.Value)
+		end)
+		if not okInfo or not req then return end
+		local cur = statValue.Value
+		rebirthInfo.Text = "Rebirth " .. RebirthValue.Value .. " -> " .. (RebirthValue.Value + 1)
+			.. " | " .. fmt(math.min(cur, req)) .. " / " .. fmt(req) .. " " .. RebirthData.STAT
+	end
+
+	updateInfo()
+	statValue:GetPropertyChangedSignal("Value"):Connect(updateInfo)
+	RebirthValue:GetPropertyChangedSignal("Value"):Connect(updateInfo)
+
+	while true do
+		if state.AutoRebirth and readyToRebirth() then
+			fireRebirth(false)
+		end
+		task.wait(0.1)
+	end
+end)
+
 setStatus("Loaded")
-print("[Xeon Auto Speed] Loaded. F = toggle, RightShift = hide GUI")
+print("[Xeon Auto Speed] Loaded. F = speed, R = auto rebirth, RightShift = hide GUI")
