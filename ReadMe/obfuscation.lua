@@ -43,6 +43,7 @@ local Config = {
     CoinTeleportDelay = 0.4,
     CoinKeyword      = "coin",
     CoinHeightOffset = 0,
+    CoinMoveSpeed    = 20,
 }
 
 -- Red + black palette. All lettering stays white.
@@ -78,9 +79,15 @@ local State = {
     LastShotAct     = 0,
     NoclipActive    = false,
     RoundActive     = false,
-    CoinIndex       = 0,
+    CoinIndex        = 0,
     CoinLastTeleport = 0,
-    Unloaded        = false,
+    CoinFrames       = {},
+    CoinFramesRefresh = 0,
+    CoinTargetIndex  = 0,
+    CoinSwitchTime   = 0,
+    CoinOriginalWalk = nil,
+    CoinOriginalJump = nil,
+    Unloaded         = false,
 }
 
 local ROLE_CACHE_TTL = 1.0
@@ -91,6 +98,9 @@ local function track(conn)
     table.insert(State.Connections, conn)
     return conn
 end
+
+-- Coin tween cleanup helpers (defined further down, used by early callbacks)
+local StopCoinTween, RestoreCoinMovement
 
 ------------------------------------------------------------
 -- MM2 HELPERS
@@ -248,6 +258,7 @@ end))
 track(LocalPlayer.CharacterAdded:Connect(function()
     State.OriginalWalk = nil
     State.OriginalCollide = {}
+    RestoreCoinMovement()
     RefreshRoundState()
 end))
 
@@ -272,8 +283,9 @@ track(RunService.Stepped:Connect(function()
     end
 
     -- Noclip
-    if (Config.NoClip or Config.TeleportKillAll) ~= State.NoclipActive then
-        SetNoclip(Config.NoClip or Config.TeleportKillAll)
+    local wantNoclip = Config.NoClip or Config.TeleportKillAll or Config.CoinFarm
+    if wantNoclip ~= State.NoclipActive then
+        SetNoclip(wantNoclip)
     end
 
     -- Auto Grab Gun
@@ -385,23 +397,116 @@ track(LocalPlayer.Idled:Connect(function()
 end))
 
 ------------------------------------------------------------
--- COIN TELEPORT (loops through every coin visual while enabled)
+-- COIN TWEEN (TweenService movement, noclip active while farming)
 ------------------------------------------------------------
-track(RunService.Stepped:Connect(function()
+local CoinTween = nil
+local CoinTweenActive = false
+local CoinProxy = nil
+local CoinApplyConn = nil
+
+StopCoinTween = function()
+    CoinTweenActive = false
+    if CoinTween then
+        local tween = CoinTween
+        CoinTween = nil
+        pcall(function() tween:Cancel() end)
+    end
+    if CoinApplyConn then
+        local conn = CoinApplyConn
+        CoinApplyConn = nil
+        pcall(function() conn:Disconnect() end)
+    end
+    if CoinProxy then
+        local proxy = CoinProxy
+        CoinProxy = nil
+        pcall(function() proxy:Destroy() end)
+    end
+end
+
+RestoreCoinMovement = function()
+    StopCoinTween()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if State.CoinOriginalWalk then hum.WalkSpeed = State.CoinOriginalWalk end
+        if State.CoinOriginalJump then hum.JumpPower = State.CoinOriginalJump end
+    end
+    State.CoinOriginalWalk = nil
+    State.CoinOriginalJump = nil
+    State.CoinTargetIndex = 0
+    State.CoinSwitchTime = 0
+end
+
+track(RunService.Heartbeat:Connect(function()
     if State.Unloaded or not Config.CoinFarm then return end
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not (root and hum) then return end
+
+    -- stop the player from fighting the scripted movement
+    if not State.CoinOriginalWalk then
+        State.CoinOriginalWalk = hum.WalkSpeed
+        State.CoinOriginalJump = hum.JumpPower
+    end
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+
+    -- an in-flight tween already owns the root
+    if CoinTweenActive then return end
 
     local now = tick()
-    if now - State.CoinLastTeleport < Config.CoinTeleportDelay then return end
+    if now - State.CoinFramesRefresh > 0.5 then
+        State.CoinFrames = GetCoinVisualFrames()
+        State.CoinFramesRefresh = now
+    end
+    local frames = State.CoinFrames
+    local frameCount = #frames
+    if frameCount == 0 then return end
 
-    local frames = GetCoinVisualFrames()
-    if #frames == 0 then return end
+    if State.CoinTargetIndex < 1 or State.CoinTargetIndex > frameCount then
+        State.CoinTargetIndex = 1
+        State.CoinSwitchTime = now
+    end
+    if now - State.CoinSwitchTime < Config.CoinTeleportDelay then return end
 
-    State.CoinIndex = State.CoinIndex % #frames + 1
-    root.CFrame = frames[State.CoinIndex] + Vector3.new(0, Config.CoinHeightOffset, 0)
-    State.CoinLastTeleport = now
+    -- Combat engine enables noclip whenever CoinFarm is on, so the tween can
+    -- travel through walls to reach the coin.
+    local targetCF = frames[State.CoinTargetIndex] + Vector3.new(0, Config.CoinHeightOffset, 0)
+    local distance = (targetCF.Position - root.Position).Magnitude
+    local duration = math.clamp(distance / math.max(Config.CoinMoveSpeed, 1), 0.1, 3)
+
+    -- TweenService drives a proxy; Heartbeat copies it onto the root so the
+    -- humanoid's physics cannot overwrite the interpolation.
+    CoinProxy = Instance.new("CFrameValue")
+    CoinProxy.Value = root.CFrame
+
+    CoinApplyConn = RunService.Heartbeat:Connect(function()
+        if not CoinProxy or not root.Parent then return end
+        root.CFrame = CoinProxy.Value
+    end)
+
+    local thisTween = TweenService:Create(CoinProxy, TweenInfo.new(
+        duration,
+        Enum.EasingStyle.Quad,
+        Enum.EasingDirection.InOut
+    ), { Value = targetCF })
+
+    CoinTween = thisTween
+    CoinTweenActive = true
+
+    thisTween.Completed:Connect(function()
+        if State.Unloaded or not Config.CoinFarm then return end
+        if CoinTween ~= thisTween then return end
+        StopCoinTween()
+        local current = State.CoinFrames
+        if #current > 0 then
+            State.CoinTargetIndex = State.CoinTargetIndex % #current + 1
+        end
+        State.CoinSwitchTime = tick()
+    end)
+
+    thisTween:Play()
 end))
 
 ------------------------------------------------------------
@@ -829,6 +934,7 @@ local function Unload()
     State.Unloaded = true
 
     if State.NoclipActive then SetNoclip(false) end
+    RestoreCoinMovement()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum and State.OriginalWalk then hum.WalkSpeed = State.OriginalWalk end
@@ -1140,8 +1246,12 @@ AddToggle(ESPTab, "Dropped Gun ESP", Config.GunESP, function(v) Config.GunESP = 
 AddToggle(MovementTab, "Speed Boost", Config.SpeedBoost, function(v) Config.SpeedBoost = v end)
 AddSlider(MovementTab, "Walk Speed", 16, 60, Config.WalkSpeedValue, function(v) Config.WalkSpeedValue = v end)
 AddToggle(MovementTab, "Noclip", Config.NoClip, function(v) Config.NoClip = v end)
-AddToggle(MovementTab, "Coin Teleport (Loop All)", Config.CoinFarm, function(v) Config.CoinFarm = v end)
+AddToggle(MovementTab, "Coin Teleport (Loop All)", Config.CoinFarm, function(v)
+    Config.CoinFarm = v
+    if not v then RestoreCoinMovement() end
+end)
 AddSlider(MovementTab, "Coin TP Delay (x0.1s)", 2, 30, Config.CoinTeleportDelay * 10, function(v) Config.CoinTeleportDelay = v / 10 end)
+AddSlider(MovementTab, "Coin Tween Speed", 5, 100, Config.CoinMoveSpeed, function(v) Config.CoinMoveSpeed = v end)
 
 ------------------------------------------------------------
 -- DRAGGING & KEYBIND
