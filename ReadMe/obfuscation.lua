@@ -38,6 +38,11 @@ local Config = {
     NoClip           = false,
     -- Misc
     AntiAFK          = true,
+    -- Coin teleport
+    CoinFarm         = false,
+    CoinTeleportDelay = 0.4,
+    CoinKeyword      = "coin",
+    CoinHeightOffset = 0,
 }
 
 -- Red + black palette. All lettering stays white.
@@ -73,6 +78,8 @@ local State = {
     LastShotAct     = 0,
     NoclipActive    = false,
     RoundActive     = false,
+    CoinIndex       = 0,
+    CoinLastTeleport = 0,
     Unloaded        = false,
 }
 
@@ -134,6 +141,36 @@ local function GetDroppedGun()
         end
     end
     return nil
+end
+
+local function GetCoinVisualFrames()
+    local frames = {}
+    local keyword = tostring(Config.CoinKeyword or "coin"):lower()
+    if keyword == "" then return frames end
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        local hit = obj.Name:lower():find(keyword, 1, true) ~= nil
+        local ancestor = obj.Parent
+        for _ = 1, 4 do
+            if not ancestor then break end
+            if ancestor.Name:lower():find(keyword, 1, true) then
+                hit = true
+                break
+            end
+            ancestor = ancestor.Parent
+        end
+        if hit then
+            local cf = nil
+            if obj:IsA("BasePart") then
+                cf = obj.CFrame
+            elseif obj:IsA("Model") then
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+                if part then cf = part.CFrame end
+            end
+            if cf then table.insert(frames, cf) end
+        end
+    end
+    return frames
 end
 
 local function GetClosestTargetForAim()
@@ -345,6 +382,26 @@ track(LocalPlayer.Idled:Connect(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
     end
+end))
+
+------------------------------------------------------------
+-- COIN TELEPORT (loops through every coin visual while enabled)
+------------------------------------------------------------
+track(RunService.Stepped:Connect(function()
+    if State.Unloaded or not Config.CoinFarm then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local now = tick()
+    if now - State.CoinLastTeleport < Config.CoinTeleportDelay then return end
+
+    local frames = GetCoinVisualFrames()
+    if #frames == 0 then return end
+
+    State.CoinIndex = State.CoinIndex % #frames + 1
+    root.CFrame = frames[State.CoinIndex] + Vector3.new(0, Config.CoinHeightOffset, 0)
+    State.CoinLastTeleport = now
 end))
 
 ------------------------------------------------------------
@@ -1083,6 +1140,8 @@ AddToggle(ESPTab, "Dropped Gun ESP", Config.GunESP, function(v) Config.GunESP = 
 AddToggle(MovementTab, "Speed Boost", Config.SpeedBoost, function(v) Config.SpeedBoost = v end)
 AddSlider(MovementTab, "Walk Speed", 16, 60, Config.WalkSpeedValue, function(v) Config.WalkSpeedValue = v end)
 AddToggle(MovementTab, "Noclip", Config.NoClip, function(v) Config.NoClip = v end)
+AddToggle(MovementTab, "Coin Teleport (Loop All)", Config.CoinFarm, function(v) Config.CoinFarm = v end)
+AddSlider(MovementTab, "Coin TP Delay (x0.1s)", 2, 30, Config.CoinTeleportDelay * 10, function(v) Config.CoinTeleportDelay = v / 10 end)
 
 ------------------------------------------------------------
 -- DRAGGING & KEYBIND
