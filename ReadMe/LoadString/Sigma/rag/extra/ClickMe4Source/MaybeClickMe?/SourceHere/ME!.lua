@@ -17,7 +17,7 @@ local FONT = C.FONT
 local THEME = C.THEME
 local state = C.state
 local tunables = C.tunables
-local CleanersConfig = C.CleanersConfig
+local XenonConfig = C.XenonConfig or C.CleanersConfig
 local antiAdmin = C.antiAdmin
 local farmHighlights = C.farmHighlights
 local scanAndHighlight = C.scanAndHighlight
@@ -52,17 +52,14 @@ local antiAFKConnection = C.antiAFKConnection
 
 -- ============================================================
 -- THEME OVERRIDE: green -> red + gradient accents
--- (part2 only has read-access to THEME; we mutate it in place so
---  all UI built in this file picks up the red scheme.)
 -- ============================================================
-THEME.Green       = Color3.fromRGB(255,  60,  60)   -- primary red
-THEME.GreenDark   = Color3.fromRGB(120,  20,  20)   -- dark red
-THEME.GreenDeep   = Color3.fromRGB( 70,  10,  10)   -- deepest red
-THEME.Red         = Color3.fromRGB(255,  30,  30)   -- alert red
--- Gradient stops used by the helpers below
-THEME.GradA       = Color3.fromRGB(255,  90,  70)   -- bright red-orange
-THEME.GradB       = Color3.fromRGB(180,  20,  30)   -- deep crimson
-THEME.GradC       = Color3.fromRGB(255,  40,  60)   -- vivid red
+THEME.Green       = Color3.fromRGB(255,  60,  60)
+THEME.GreenDark   = Color3.fromRGB(120,  20,  20)
+THEME.GreenDeep   = Color3.fromRGB( 70,  10,  10)
+THEME.Red         = Color3.fromRGB(255,  30,  30)
+THEME.GradA       = Color3.fromRGB(255,  90,  70)
+THEME.GradB       = Color3.fromRGB(180,  20,  30)
+THEME.GradC       = Color3.fromRGB(255,  40,  60)
 
 -- ============================================================
 -- Gradient helpers
@@ -78,7 +75,6 @@ local function applyUIGradient(inst, a, b, rotation)
     return g
 end
 
--- Adds a red gradient stroke to a GuiObject
 local function applyGradientStroke(inst, thickness, transparency)
     local s = Instance.new("UIStroke")
     s.Thickness = thickness or 1.5
@@ -96,7 +92,6 @@ local function applyGradientStroke(inst, thickness, transparency)
     return s, g
 end
 
--- Animated sweeping gradient for "glow" accents
 local function animateSweep(gradient, speed)
     speed = speed or 60
     task.spawn(function()
@@ -118,14 +113,12 @@ mainFrame.Size=UDim2.new(0,UI_W,0,UI_H); mainFrame.Position=UDim2.new(0.5,-UI_W/
 mainFrame.BackgroundColor3=THEME.Bg; mainFrame.BorderSizePixel=0
 mainFrame.Active=true; mainFrame.Draggable=true; mainFrame.ClipsDescendants=true; mainFrame.Parent=screenGui
 local corner = Instance.new("UICorner"); corner.CornerRadius=UDim.new(0,8); corner.Parent=mainFrame
--- gradient stroke replaces flat border
 local mainStroke = applyGradientStroke(mainFrame, 1.5, 0.1)
 animateSweep(mainStroke:FindFirstChildOfClass("UIGradient"), 25)
 
 local titleBar = Instance.new("Frame")
 titleBar.Size=UDim2.new(1,0,0,40); titleBar.BackgroundColor3=THEME.TitleBar; titleBar.BorderSizePixel=0; titleBar.Parent=mainFrame
 local tbc = Instance.new("UICorner"); tbc.CornerRadius=UDim.new(0,8); tbc.Parent=titleBar
--- gradient fill overlay on title bar (subtle)
 local tbGrad = Instance.new("UIGradient")
 tbGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0.0, Color3.fromRGB(60, 8, 8)),
@@ -139,9 +132,7 @@ local title = Instance.new("TextLabel")
 title.Size=UDim2.new(0.6,0,1,0); title.Position=UDim2.new(0,16,0,0)
 title.BackgroundTransparency=1; title.Text="XENON"; title.TextColor3=THEME.Green
 title.TextSize=18; title.Font=FONT; title.TextXAlignment=Enum.TextXAlignment.Left; title.Parent=titleBar
--- gradient tint on the title text (red -> orange)
 applyUIGradient(title, THEME.GradA, THEME.GradC, 0)
--- animated glow stroke around title text for a "live" feel
 applyGradientStroke(title, 1, 0.7)
 
 local close = Instance.new("TextButton")
@@ -174,7 +165,6 @@ for i, name in ipairs(tabs) do
     b.Text=name; b.TextColor3 = i==1 and THEME.Green or THEME.TextDim
     b.TextSize=10; b.Font=FONT; b.BorderSizePixel=0; b.AutoButtonColor=false
     b.Parent=tabRow; tabButtons[name]=b
-    -- gradient stroke for each tab (bright when active)
     local _, g = applyGradientStroke(b, 1, i==1 and 0.15 or 0.65)
     tabGradients[name] = { stroke = _, gradient = g, wasActive = (i==1) }
 end
@@ -195,7 +185,6 @@ mini.BackgroundColor3=THEME.Bg; mini.BorderSizePixel=0; mini.Text=""
 mini.AutoButtonColor=false; mini.Active=true; mini.Draggable=true; mini.Visible=false
 mini.Parent=screenGui
 local mic = Instance.new("UICorner"); mic.CornerRadius=UDim.new(0,8); mic.Parent=mini
--- mini button uses animated gradient stroke
 local miniStroke = applyGradientStroke(mini, 2, 0.05)
 animateSweep(miniStroke:FindFirstChildOfClass("UIGradient"), 40)
 local miniLabel = Instance.new("TextLabel")
@@ -238,13 +227,12 @@ local function makeToggle(labelText, stateRef, key, callback, order)
     b.BackgroundColor3 = stateRef[key] and THEME.Green or THEME.GreenDark
     b.Text=""; b.BorderSizePixel=0; b.AutoButtonColor=false; b.Parent=r
     local bc = Instance.new("UICorner"); bc.CornerRadius=UDim.new(0,3); bc.Parent=b
-    -- gradient fill on the toggle knob
     local togGrad = Instance.new("UIGradient")
     togGrad.Rotation = 90
     togGrad.Parent = b
     local function paintToggle()
         if stateRef[key] then
-            b.BackgroundColor3 = Color3.new(1,1,1) -- let gradient show
+            b.BackgroundColor3 = Color3.new(1,1,1)
             togGrad.Color = ColorSequence.new({
                 ColorSequenceKeypoint.new(0, THEME.GradA),
                 ColorSequenceKeypoint.new(1, THEME.GradC),
@@ -313,7 +301,6 @@ local function makeSectionHeader(text, order)
     h.Size=UDim2.new(1,0,0,22); h.BackgroundTransparency=1; h.Text=text
     h.TextColor3=THEME.TextDim; h.TextSize=11; h.Font=FONT
     h.TextXAlignment=Enum.TextXAlignment.Left; h.LayoutOrder=order; h.Parent=content
-    -- subtle red gradient tint on header text
     applyUIGradient(h, THEME.GradC, THEME.GradB, 0)
     return h
 end
@@ -379,11 +366,11 @@ local function makeDropdown(titleText, defaultOpen, order)
     header.MouseButton1Click:Connect(function()
         open = not open; body.Visible=open
         header.Text=(open and "▲  " or "▼  ")..titleText
-        if titleText == "SUPER FARM" then state.ui.superFarmOpen=open; CleanersConfig.markDirty() end
+        if titleText == "SUPER FARM" then state.ui.superFarmOpen=open; XenonConfig.markDirty() end
     end)
     return header, body, function() return open end, function(v)
         open=v; body.Visible=v; header.Text=(v and "▲  " or "▼  ")..titleText
-        if titleText == "SUPER FARM" then state.ui.superFarmOpen=v; CleanersConfig.markDirty() end
+        if titleText == "SUPER FARM" then state.ui.superFarmOpen=v; XenonConfig.markDirty() end
     end
 end
 
@@ -440,7 +427,7 @@ local function buildFarmsEnable(parent, sNext)
             task.spawn(function() if state.movement.mode=="Tween" then forceIdleUnder() else forceIdle() end end)
         end
         paintEn()
-        CleanersConfig.markDirty()
+        XenonConfig.markDirty()
     end)
 end
 local function buildFarmsTargets(parent, sNext)
@@ -449,7 +436,7 @@ local function buildFarmsTargets(parent, sNext)
     tgtH.TextColor3=THEME.TextDim; tgtH.TextSize=10; tgtH.Font=FONT
     tgtH.TextXAlignment=Enum.TextXAlignment.Left; tgtH.LayoutOrder=sNext(); tgtH.Parent=parent
     for _, k in ipairs({"Registers","ATMs","Cash","Dumpsters"}) do
-        makeFarmToggleRow(parent, k, state.superTargets, k, sNext(), function() CleanersConfig.markDirty() end)
+        makeFarmToggleRow(parent, k, state.superTargets, k, sNext(), function() XenonConfig.markDirty() end)
     end
 end
 local function buildFarmsJob(parent, sNext)
@@ -593,7 +580,7 @@ local function buildFarmsThresholds(parent, sNext)
             local bc2 = Instance.new("UICorner"); bc2.CornerRadius=UDim.new(0,3); bc2.Parent=b
             local g = Instance.new("UIGradient"); g.Rotation=90; g.Color=ColorSequence.new(THEME.PanelAlt); g.Parent=b
             table.insert(btns, {b=b, v=v, g=g})
-            b.MouseButton1Click:Connect(function() onSelect(v); paint(); CleanersConfig.markDirty() end)
+            b.MouseButton1Click:Connect(function() onSelect(v); paint(); XenonConfig.markDirty() end)
         end
         paint(); return r
     end
@@ -662,7 +649,6 @@ local function buildAntiAdminTab()
 
     makeSectionHeader("Watchlist (" .. #ADMIN_ROSTER .. " admins)", next())
 
-    -- container that we rebuild every second
     local listBox = Instance.new("Frame")
     listBox.Size=UDim2.new(1,0,0,0); listBox.AutomaticSize=Enum.AutomaticSize.Y
     listBox.BackgroundTransparency=1; listBox.LayoutOrder=next(); listBox.Parent=content
@@ -720,7 +706,6 @@ local function buildAntiAdminTab()
         rowWidgets[data.userId] = makeAdminRow(i, data)
     end
 
-    -- updater loop: repaint every 1s based on fresh snapshot
     task.spawn(function()
         while listBox.Parent do
             task.wait(1)
@@ -820,7 +805,6 @@ local function buildStats()
 
     content.CanvasSize = UDim2.new(0,0,0,o*34 + 200)
 
-    -- live updater
     task.spawn(function()
         while content.Parent do
             task.wait(0.5)
@@ -861,6 +845,8 @@ local function buildSettings()
     makeToggle("FPS Boost", state.protection, "FPSBoost", function(v) if v then fpsBoostEnable() else fpsBoostDisable() end end, next())
     makeToggle("Damage Failsafe", state.protection, "DamageFailsafe", nil, next())
     makeSectionHeader("Tunables", next())
+    -- NEW: Tween speed row (reads/writes tunables.tweenSpeed from part1)
+    makeOptionRow("Tween speed", {10,14,20}, function() return tunables.tweenSpeed end, function(v) tunables.tweenSpeed=v; XenonConfig.markDirty() end, next())
     makeOptionRow("TP stand offset", {3,4,5,6,8}, function() return tunables.tpStandOffset end, function(v) tunables.tpStandOffset=v end, next())
     makeOptionRow("TP interval (s)", {0.25,0.35,0.45,0.60}, function() return tunables.tpInterval end, function(v) tunables.tpInterval=v end, next())
     makeOptionRow("Register dwell (s)", {0.20,0.35,0.50,0.75}, function() return tunables.registerDwell end, function(v) tunables.registerDwell=v end, next())
@@ -903,7 +889,7 @@ for name, b in pairs(tabButtons) do b.MouseButton1Click:Connect(function() switc
 pcall(switchTab, "Farms")
 
 close.MouseButton1Click:Connect(function()
-    pcall(function() CleanersConfig.flush() end)
+    pcall(function() XenonConfig.flush() end)
     pcall(function() screenGui:Destroy() end)
     state.running = false
     if sessionStats.isRunning then sessionStats.stop() end
@@ -913,7 +899,7 @@ task.spawn(function() task.wait(4.1); pcall(function() screenGui.Enabled=true en
 -- resume farm with startup delay
 task.spawn(function()
     task.wait(8)
-    if not (CleanersConfig.loaded and state.farms.SuperFarm) then return end
+    if not (XenonConfig.loaded and state.farms.SuperFarm) then return end
     local waited = 0
     while waited < 5 do
         local ch = localPlayer.Character
