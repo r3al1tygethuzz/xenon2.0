@@ -44,7 +44,7 @@ local function make(className, props, children)
 end
 
 local screenGui = make("ScreenGui", {
-	Name = "XeonAutoSpeedGui",
+	Name = "Xenon",
 	ResetOnSpawn = false,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 	Parent = playerGui,
@@ -67,7 +67,7 @@ make("TextLabel", {
 	Size = UDim2.new(1, -20, 0, 40),
 	Position = UDim2.new(0, 10, 0, 0),
 	BackgroundTransparency = 1,
-	Text = "Xeon Auto Speed + Rebirth",
+	Text = "Xenon",
 	TextColor3 = Color3.fromRGB(255, 255, 255),
 	Font = Enum.Font.GothamBold,
 	TextSize = 17,
@@ -590,7 +590,7 @@ local function startFly()
 	end)
 
 	flyBody = Instance.new("BodyVelocity")
-	flyBody.Name = "XeonFlyVelocity"
+	flyBody.Name = "XenonFlyVelocity"
 	flyBody.MaxForce = Vector3.new(1e5, 1e5, 1e5)
 	flyBody.P = 10000
 	flyBody.Velocity = Vector3.new(0, 0, 0)
@@ -790,7 +790,7 @@ task.spawn(function()
 		return ReplicatedStorage:WaitForChild("IncreaseSpeed", 10)
 	end)
 	if not ok or not increaseSpeed then
-		warn("[Xeon Auto Speed] IncreaseSpeed remote not found")
+		warn("[Xenon] IncreaseSpeed remote not found")
 		setStatus("IncreaseSpeed not found")
 		return
 	end
@@ -822,14 +822,14 @@ task.spawn(function()
 	end)
 
 	if not ok or not RebirthData or not RebirthEvent or not RebirthValue or not statValue then
-		warn("[Xeon Auto Speed] Rebirth setup failed: " .. tostring(err))
+		warn("[Xenon] Rebirth setup failed: " .. tostring(err))
 		rebirthInfo.Text = "Rebirth: not available"
 		setStatus("Rebirth not found")
 		return
 	end
 
 	setStatus("Rebirth ready")
-	print("[Xeon Auto Speed] Rebirth ready. Stat: " .. tostring(RebirthData.STAT))
+	print("[Xenon] Rebirth ready. Stat: " .. tostring(RebirthData.STAT))
 
 	local function fmt(n)
 		n = math.floor(n)
@@ -862,4 +862,4 @@ task.spawn(function()
 end)
 
 setStatus("Loaded")
-print("[Xeon Auto Speed] Loaded. F=speed R=rebirth T=fly N=noclip LeftShift/RightShift=show/hide GUI. Tabs: Main / TPs")
+print("[Xenon] Loaded. F=speed R=rebirth T=fly N=noclip LeftShift/RightShift=show/hide GUI. Tabs: Main / TPs")
