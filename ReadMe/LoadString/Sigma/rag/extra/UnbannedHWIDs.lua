@@ -10,31 +10,27 @@ local state = {
 	AutoSpeed = true,
 	SpeedDelay = 0.02, -- seconds; lower = faster, 0 = every frame
 	AutoRebirth = false,
-	AutoGifts = true,
 	Fly = false,
 	Noclip = false,
 }
 
 local TOGGLE_SPEED_KEY = Enum.KeyCode.F
 local TOGGLE_REBIRTH_KEY = Enum.KeyCode.R
-local TOGGLE_GIFT_KEY = Enum.KeyCode.G
 local TOGGLE_FLY_KEY = Enum.KeyCode.T
 local TOGGLE_NOCLIP_KEY = Enum.KeyCode.N
 local TOGGLE_GUI_KEY = Enum.KeyCode.LeftShift
 local TOGGLE_GUI_ALT_KEY = Enum.KeyCode.RightShift -- keep the old key working too
 
--- Rebirth / gift references (filled in by the setup tasks below)
+-- Rebirth references (filled in by the setup task below)
 local RebirthData, RewardCalc, RebirthEvent, leaderstats, RebirthValue, statValue
-local PlayTime, Recv, TimeGifts, giftNames
 local rebirthBusy = false
-local giftBusy = false
-local claimedGifts = {}
-local giftFails = {}
 
 local character, humanoid, rootPart
-local flyConnection, noclipConnection
+local flyConnection, flyBody, noclipConnection, noclipAddedConnection
 local originalCanCollide = {}
 local FLY_SPEED = 50
+local FLY_SMOOTHING = 8 -- higher = snappier, lower = floatier
+local flyVelocity = Vector3.new(0, 0, 0)
 
 local function make(className, props, children)
 	local obj = Instance.new(className)
@@ -83,7 +79,7 @@ make("TextLabel", {
 	Size = UDim2.new(1, -20, 0, 18),
 	Position = UDim2.new(0, 10, 0, 34),
 	BackgroundTransparency = 1,
-	Text = "F:Speed R:Rebirth G:Gifts T:Fly N:Noclip Shift:GUI",
+	Text = "F:Speed R:Rebirth T:Fly N:Noclip Shift:GUI",
 	TextColor3 = Color3.fromRGB(150, 160, 175),
 	Font = Enum.Font.Gotham,
 	TextSize = 10,
@@ -171,10 +167,10 @@ make("TextLabel", {
 })
 
 local teleports = {
-	{ label = "TP 1", pos = Vector3.new(4671, 0, 11235) },
-	{ label = "TP 2", pos = Vector3.new(4570, 0, 11308) },
-	{ label = "TP 3", pos = Vector3.new(4570, 0, 9484) },
-	{ label = "TP 4", pos = Vector3.new(4649, 0, 8466) },
+	{ label = "TP 1", pos = Vector3.new(13763, 0, -18525) },
+	{ label = "TP 2", pos = Vector3.new(13888, 0, -18530) },
+	{ label = "TP 3", pos = Vector3.new(13892, 0, 38846) },
+	{ label = "TP 4", pos = Vector3.new(13768, 0, 38864) },
 }
 
 local function teleportTo(pos, label)
@@ -433,67 +429,10 @@ local function refreshRebirth()
 	rebirthBtn.BackgroundColor3 = state.AutoRebirth and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
 end
 
--- Free Gifts toggle + manual claim
-local giftRow = make("Frame", {
-	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 196),
-	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
-	BorderSizePixel = 0,
-	Parent = main,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-make("TextLabel", {
-	Size = UDim2.new(0, 112, 1, 0),
-	Position = UDim2.new(0, 10, 0, 0),
-	BackgroundTransparency = 1,
-	Text = "Free Gifts",
-	TextColor3 = Color3.fromRGB(235, 235, 235),
-	Font = Enum.Font.GothamSemibold,
-	TextSize = 13,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = giftRow,
-})
-
-local claimBtn = make("TextButton", {
-	Size = UDim2.new(0, 46, 0, 24),
-	Position = UDim2.new(1, -116, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(70, 110, 180),
-	BorderSizePixel = 0,
-	Text = "CLAIM",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 9,
-	Parent = giftRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-local giftBtn = make("TextButton", {
-	Size = UDim2.new(0, 56, 0, 24),
-	Position = UDim2.new(1, -64, 0.5, -12),
-	BackgroundColor3 = Color3.fromRGB(50, 180, 90),
-	BorderSizePixel = 0,
-	Text = "ON",
-	TextColor3 = Color3.fromRGB(255, 255, 255),
-	Font = Enum.Font.GothamBold,
-	TextSize = 12,
-	Parent = giftRow,
-}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
-
-local giftInfo = make("TextLabel", {
-	Size = UDim2.new(1, -20, 0, 16),
-	Position = UDim2.new(0, 10, 0, 234),
-	BackgroundTransparency = 1,
-	Text = "Free gifts: loading...",
-	TextColor3 = Color3.fromRGB(170, 180, 200),
-	Font = Enum.Font.Gotham,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Parent = main,
-})
-
 -- Fly toggle
 local flyRow = make("Frame", {
 	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 254),
+	Position = UDim2.new(0, 10, 0, 196),
 	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
 	BorderSizePixel = 0,
 	Parent = main,
@@ -526,7 +465,7 @@ local flyBtn = make("TextButton", {
 -- Noclip toggle
 local noclipRow = make("Frame", {
 	Size = UDim2.new(1, -20, 0, 34),
-	Position = UDim2.new(0, 10, 0, 292),
+	Position = UDim2.new(0, 10, 0, 234),
 	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
 	BorderSizePixel = 0,
 	Parent = main,
@@ -556,132 +495,47 @@ local noclipBtn = make("TextButton", {
 	Parent = noclipRow,
 }, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
 
-local function refreshGifts()
-	giftBtn.Text = state.AutoGifts and "ON" or "OFF"
-	giftBtn.BackgroundColor3 = state.AutoGifts and Color3.fromRGB(50, 180, 90) or Color3.fromRGB(180, 60, 60)
-end
+-- Fly speed control
+local flySpeedRow = make("Frame", {
+	Size = UDim2.new(1, -20, 0, 34),
+	Position = UDim2.new(0, 10, 0, 272),
+	BackgroundColor3 = Color3.fromRGB(32, 35, 44),
+	BorderSizePixel = 0,
+	Parent = main,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
 
-local function formatTime(seconds)
-	seconds = math.floor(seconds)
-	local h = math.floor(seconds / 3600)
-	local m = math.floor(seconds % 3600 / 60)
-	local s = seconds % 60
-	if h > 0 then
-		return string.format("%02d:%02d:%02d", h, m, s)
+make("TextLabel", {
+	Size = UDim2.new(0, 90, 1, 0),
+	Position = UDim2.new(0, 10, 0, 0),
+	BackgroundTransparency = 1,
+	Text = "Fly Speed",
+	TextColor3 = Color3.fromRGB(235, 235, 235),
+	Font = Enum.Font.GothamSemibold,
+	TextSize = 13,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Parent = flySpeedRow,
+})
+
+local flySpeedBox = make("TextBox", {
+	Size = UDim2.new(0, 70, 0, 24),
+	Position = UDim2.new(1, -78, 0.5, -12),
+	BackgroundColor3 = Color3.fromRGB(45, 48, 58),
+	BorderSizePixel = 0,
+	Text = tostring(FLY_SPEED),
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	Font = Enum.Font.Gotham,
+	TextSize = 12,
+	ClearTextOnFocus = false,
+	Parent = flySpeedRow,
+}, { make("UICorner", { CornerRadius = UDim.new(0, 6) }) })
+
+flySpeedBox.FocusLost:Connect(function()
+	local n = tonumber(flySpeedBox.Text)
+	if n then
+		FLY_SPEED = math.clamp(n, 1, 300)
 	end
-	return string.format("%02d:%02d", m, s)
-end
-
-local function claimGift(name)
-	if not Recv or giftBusy then return false end
-	giftBusy = true
-	local ok, result
-
-	if typeof(Recv) == "Instance" and Recv:IsA("RemoteFunction") then
-		ok, result = pcall(function()
-			local r = Recv:InvokeServer("TimeGift", name)
-			if not r then
-				-- Some games expect the gift index as a number instead of a string.
-				r = Recv:InvokeServer("TimeGift", tonumber(name))
-			end
-			return r
-		end)
-	else
-		-- Fallback in case Recv is a RemoteEvent in your game.
-		ok, result = pcall(function()
-			Recv:FireServer("TimeGift", name)
-			return true
-		end)
-	end
-
-	giftBusy = false
-	if ok and result then
-		claimedGifts[name] = true
-		giftFails[name] = nil
-		setStatus("Claimed free gift " .. name)
-		return true
-	end
-	-- Server refused (usually already claimed). Stop retrying after a few tries.
-	giftFails[name] = (giftFails[name] or 0) + 1
-	if giftFails[name] >= 3 then
-		claimedGifts[name] = true
-	end
-	return false
-end
-
-local function getMinutesObject(folder)
-	if not folder then return nil end
-	local minutes = folder:FindFirstChild("Minutes")
-	if minutes then return minutes end
-	-- Fallback: some setups store the minutes directly on the child.
-	if folder:IsA("NumberValue") or folder:IsA("IntValue") then
-		return folder
-	end
-	return nil
-end
-
-local function claimNextGift(manual)
-	if not PlayTime or not TimeGifts or not giftNames then
-		if manual then setStatus("Free gifts not available") end
-		return false
-	end
-	for _, name in ipairs(giftNames) do
-		if not claimedGifts[name] then
-			local minutes = getMinutesObject(TimeGifts:FindFirstChild(name))
-			if minutes and PlayTime.Value / 60 >= minutes.Value then
-				return claimGift(name)
-			end
-		end
-	end
-	if manual then setStatus("No free gift ready") end
-	return false
-end
-
-local function updateGiftInfo()
-	if not PlayTime or not TimeGifts or not giftNames then return end
-	local now = PlayTime.Value
-	for _, name in ipairs(giftNames) do
-		if not claimedGifts[name] then
-			local minutes = getMinutesObject(TimeGifts:FindFirstChild(name))
-			if minutes then
-				local need = minutes.Value * 60
-				local text
-				if now / 60 >= minutes.Value then
-					text = "READY - claim now"
-				else
-					text = formatTime(need - now)
-				end
-				if RewardCalc and RewardCalc.TimeGiftRewards then
-					local reward = RewardCalc.TimeGiftRewards[tonumber(name)]
-					if reward then
-						local okText, rewardText = pcall(function()
-							if reward.Type == "Pet" then
-								return (player:GetAttribute("GiftPet_" .. name) or "Mystery Pet") .. "!"
-							end
-							return RewardCalc.displayText(player, reward)
-						end)
-						if okText and rewardText then
-							text = text .. " (" .. rewardText .. ")"
-						end
-					end
-				end
-				giftInfo.Text = "Next free gift " .. name .. ": " .. text
-				return
-			end
-		end
-	end
-	giftInfo.Text = "All free gifts claimed"
-end
-
-giftBtn.MouseButton1Click:Connect(function()
-	state.AutoGifts = not state.AutoGifts
-	refreshGifts()
-	setStatus("Free Gifts: " .. (state.AutoGifts and "ON" or "OFF"))
-end)
-
-claimBtn.MouseButton1Click:Connect(function()
-	claimNextGift(true)
-	updateGiftInfo()
+	flySpeedBox.Text = tostring(FLY_SPEED)
+	setStatus("Fly speed: " .. FLY_SPEED)
 end)
 
 -- Fly / Noclip
@@ -700,31 +554,68 @@ local function stopFly()
 		flyConnection:Disconnect()
 		flyConnection = nil
 	end
-	if humanoid then
-		humanoid.PlatformStand = false
+
+	if flyBody then
+		pcall(function() flyBody:Destroy() end)
+		flyBody = nil
 	end
+
+	flyVelocity = Vector3.new(0, 0, 0)
+
+	if humanoid then
+		pcall(function()
+			-- Undo the old PlatformStand state so walking/flying works after toggling off.
+			humanoid.PlatformStand = false
+			humanoid:ChangeState(Enum.HumanoidStateType.Freefall)
+		end)
+	end
+
 	if rootPart then
-		rootPart.Velocity = Vector3.new(0, 0, 0)
+		pcall(function()
+			rootPart.Velocity = Vector3.new(0, 0, 0)
+			rootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+		end)
 	end
 end
 
 local function startFly()
 	stopFly()
 	if not humanoid or not rootPart then return end
-	humanoid.PlatformStand = true
-	flyConnection = RunService.Heartbeat:Connect(function()
-		if not state.Fly or not rootPart or not humanoid then return end
+
+	-- No PlatformStand: it can leave the Humanoid stuck after the first toggle.
+	-- Flying state + BodyVelocity gives smooth movement and restores cleanly.
+	pcall(function()
+		humanoid.PlatformStand = false
+		humanoid:ChangeState(Enum.HumanoidStateType.Flying)
+	end)
+
+	flyBody = Instance.new("BodyVelocity")
+	flyBody.Name = "XeonFlyVelocity"
+	flyBody.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+	flyBody.P = 10000
+	flyBody.Velocity = Vector3.new(0, 0, 0)
+	flyBody.Parent = rootPart
+
+	-- Heartbeat provides the real frame delta, so speed stays frame-rate independent.
+	flyConnection = RunService.Heartbeat:Connect(function(dt)
+		if not state.Fly or not rootPart or not rootPart.Parent or not humanoid then return end
+		if not flyBody or not flyBody.Parent then return end
+		dt = math.clamp(dt, 0, 0.1)
+
 		local dir = Vector3.new(0, 0, 0)
-		if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += rootPart.CFrame.LookVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= rootPart.CFrame.LookVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += rootPart.CFrame.RightVector end
-		if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= rootPart.CFrame.RightVector end
+		local cf = rootPart.CFrame
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cf.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cf.LookVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cf.RightVector end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cf.RightVector end
 		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0, 1, 0) end
 		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.C) then
 			dir -= Vector3.new(0, 1, 0)
 		end
 		if dir.Magnitude > 0 then dir = dir.Unit end
-		rootPart.Velocity = dir * FLY_SPEED
+
+		flyVelocity = flyVelocity:Lerp(dir * FLY_SPEED, math.clamp(dt * FLY_SMOOTHING, 0, 1))
+		flyBody.Velocity = flyVelocity
 	end)
 end
 
@@ -740,10 +631,23 @@ local function setFly(on)
 	end
 end
 
+local function applyNoclipTo(obj)
+	if obj:IsA("BasePart") and obj.CanCollide then
+		if originalCanCollide[obj] == nil then
+			originalCanCollide[obj] = true
+		end
+		obj.CanCollide = false
+	end
+end
+
 local function stopNoclip()
 	if noclipConnection then
 		noclipConnection:Disconnect()
 		noclipConnection = nil
+	end
+	if noclipAddedConnection then
+		noclipAddedConnection:Disconnect()
+		noclipAddedConnection = nil
 	end
 	for obj, value in pairs(originalCanCollide) do
 		if obj and obj.Parent then
@@ -755,15 +659,18 @@ end
 
 local function startNoclip()
 	stopNoclip()
-	noclipConnection = RunService.Heartbeat:Connect(function()
+	if not character then return end
+
+	-- Cover parts added mid-session (tools, accessories, respawn limbs).
+	noclipAddedConnection = character.DescendantAdded:Connect(function(obj)
+		if state.Noclip then applyNoclipTo(obj) end
+	end)
+
+	-- Stepped runs before physics, so the collision change applies that same frame.
+	noclipConnection = RunService.Stepped:Connect(function()
 		if not state.Noclip or not character then return end
 		for _, obj in ipairs(character:GetDescendants()) do
-			if obj:IsA("BasePart") and obj.CanCollide then
-				if originalCanCollide[obj] == nil then
-					originalCanCollide[obj] = true
-				end
-				obj.CanCollide = false
-			end
+			applyNoclipTo(obj)
 		end
 	end)
 end
@@ -830,9 +737,9 @@ local function fireRebirth(manual)
 	if ok then
 		setStatus("Rebirth requested")
 		-- Wait for the server to apply it so the auto loop doesn't double-fire.
-		local start = os.clock()
-		while readyToRebirth() and os.clock() - start < 2 do
-			task.wait(0.1)
+		local elapsed = 0
+		while readyToRebirth() and elapsed < 2 do
+			elapsed += task.wait(0.1)
 		end
 		task.wait(0.2)
 	else
@@ -870,10 +777,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		state.AutoRebirth = not state.AutoRebirth
 		refreshRebirth()
 		setStatus("Auto Rebirth: " .. (state.AutoRebirth and "ON" or "OFF"))
-	elseif input.KeyCode == TOGGLE_GIFT_KEY then
-		state.AutoGifts = not state.AutoGifts
-		refreshGifts()
-		setStatus("Free Gifts: " .. (state.AutoGifts and "ON" or "OFF"))
 	elseif input.KeyCode == TOGGLE_FLY_KEY then
 		setFly(not state.Fly)
 	elseif input.KeyCode == TOGGLE_NOCLIP_KEY then
@@ -958,71 +861,5 @@ task.spawn(function()
 	end
 end)
 
--- Free Gift setup + auto claim loop
-task.spawn(function()
-	-- Wait for the remote/values instead of failing after a short timeout.
-	local step = 0
-	while (not PlayTime or not Recv or not TimeGifts) and step < 30 do
-		step = step + 1
-		if not PlayTime then
-			PlayTime = player:FindFirstChild("PlayTime")
-			if not PlayTime then
-				local ls = player:FindFirstChild("leaderstats")
-				if ls then PlayTime = ls:FindFirstChild("PlayTime") end
-			end
-		end
-		if not Recv then Recv = ReplicatedStorage:FindFirstChild("Recv") end
-		if not TimeGifts then TimeGifts = ReplicatedStorage:FindFirstChild("TimeGifts") end
-		if not (PlayTime and Recv and TimeGifts) then
-			setStatus("Waiting for free gifts...")
-			task.wait(1)
-		end
-	end
-
-	if not PlayTime or not Recv or not TimeGifts then
-		warn("[Xeon Auto Speed] Free gift setup failed. PlayTime=" .. tostring(PlayTime)
-			.. " Recv=" .. tostring(Recv) .. " TimeGifts=" .. tostring(TimeGifts))
-		giftInfo.Text = "Free gifts: not found"
-		setStatus("Free gifts not found")
-		return
-	end
-
-	-- RewardCalc is only used for the reward text, so it must not block claiming.
-	pcall(function()
-		if not RewardCalc then
-			RewardCalc = require(ReplicatedStorage:WaitForChild("RewardCalc", 10))
-		end
-	end)
-
-	local names = {}
-	for _, child in ipairs(TimeGifts:GetChildren()) do
-		if tonumber(child.Name) and getMinutesObject(child) then
-			table.insert(names, child.Name)
-		end
-	end
-	table.sort(names, function(a, b) return tonumber(a) < tonumber(b) end)
-	giftNames = names
-
-	if #names > 0 then
-		setStatus("Free gifts: " .. #names .. " found")
-	else
-		setStatus("No free gifts found")
-	end
-
-	refreshGifts()
-	updateGiftInfo()
-	PlayTime:GetPropertyChangedSignal("Value"):Connect(updateGiftInfo)
-
-	print("[Xeon Auto Speed] Free gifts ready: " .. #names .. " gift(s). Recv=" .. Recv.ClassName)
-
-	while true do
-		if state.AutoGifts then
-			claimNextGift(false)
-		end
-		updateGiftInfo()
-		task.wait(0.5)
-	end
-end)
-
 setStatus("Loaded")
-print("[Xeon Auto Speed] Loaded. F=speed R=rebirth G=gifts T=fly N=noclip LeftShift/RightShift=show/hide GUI. Tabs: Main / TPs")
+print("[Xeon Auto Speed] Loaded. F=speed R=rebirth T=fly N=noclip LeftShift/RightShift=show/hide GUI. Tabs: Main / TPs")
