@@ -14,7 +14,7 @@ if _G.__XenonRunning then
 end
 _G.__XenonRunning = true
 
-local PART2_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/ClickMe4Source/MaybeClickMe%3F/SourceHere/ME!.lua"
+local PART2_URL = "https://gist.githubusercontent.com/powelleshon-max/90dec1588418c13785f8a7b1c3bbcabd/raw/4e81460557a8d57dcf863e1d9b90f70f33554028/Ssss"
 
 local XENON_LOGO = "rbxassetid://112895096658850"
 local PRIVATE_SERVER_LINK = ""
@@ -168,8 +168,12 @@ local BANK_WAIT_AFTER_BUTTON = 17
 local JEWELRY_SPLIT_INDEX = 4
 local JEWELRY_POST_RESET_WAIT = 300
 local HARD_RESET_MIN_GAP = 3
-local TP_COOLDOWN_AFTER = 8
-local TP_BREATH_DURATION = 2.0
+
+-- === ANTI-KICK / RATE-LIMIT TUNING (new) ===
+local TP_COOLDOWN_AFTER = 12          -- was 8  → more fast TPs before breath pause
+local TP_BREATH_DURATION = 2.75       -- was 2.0 → longer rest
+local MAX_TPS_PER_MINUTE = 90         -- hard cap; throttles if exceeded
+local TP_RATE_WINDOW = 60
 
 local TP_ACTIONS_BEFORE_RESET = 6
 local TWEEN_ACTIONS_BEFORE_RESET = 30
@@ -190,8 +194,8 @@ local BOX_LOOP_DELAY = 0.15
 local BOX_REWARD_COOLDOWN = 0.4
 
 local UNDER_Y = -6.14
-local TWEEN_SPEED = 28
-local TWEEN_MIN_GAP = 0.10
+-- === TWEEN SPEED now lives in tunables (see below) ===
+local TWEEN_MIN_GAP = 0.18            -- was 0.10 → more spacing between legs
 local TWEEN_LEG_TIMEOUT = 6
 local IDLE_POS = Vector3.new(-912.79, 1.90, -1136.18)
 local IDLE_THRESHOLD = 30
@@ -199,10 +203,23 @@ local IDLE_THRESHOLD = 30
 local tunables = {
     tpStandOffset=5, tpInterval=0.45, registerDwell=0.35,
     atmDwell=1.6, nyraDwell=0.5, cashDwell=0.12,
+    -- NEW: tween pacing controls
+    tweenSpeed=14,          -- was 28 (hardcoded). lower = slower
+    tweenPauseEvery=12,     -- after N legs, take a rest
+    tweenPauseDur=0.4,      -- rest duration (seconds)
+    maxTPsPerMinute=MAX_TPS_PER_MINUTE,
 }
 print("[XENON] ✓ constants defined")
 
+-- Tween leg counter (used by tweenPauseEvery)
+local tweenLegCounter = 0
+
+-- TP rate tracker (used by maxTPsPerMinute)
+local tpTimestamps = {}
+
+-- ============================================================
 -- config
+-- ============================================================
 local XenonConfig = {
     FILE="Xenon_config.json", VERSION=1, dirty=false, lastChange=0, loaded=false, ioWorking=nil,
 }
@@ -571,9 +588,38 @@ function AS.zeroVelocity()
     end
 end
 
+-- NEW: helper to keep TP rate <= maxTPsPerMinute
+local function throttleTPRate()
+    local now = tick()
+    local cutoff = now - TP_RATE_WINDOW
+    -- purge old
+    local i = 1
+    while i <= #tpTimestamps and tpTimestamps[i] < cutoff do
+        table.remove(tpTimestamps, i)
+    end
+    if #tpTimestamps >= tunables.maxTPsPerMinute then
+        -- find oldest that's still in-window; sleep until it drops
+        local oldest = tpTimestamps[1]
+        local waitFor = (oldest + TP_RATE_WINDOW) - now
+        if waitFor > 0 then
+            task.wait(waitFor + 0.05)
+        end
+        -- re-purge
+        now = tick()
+        cutoff = now - TP_RATE_WINDOW
+        i = 1
+        while i <= #tpTimestamps and tpTimestamps[i] < cutoff do
+            table.remove(tpTimestamps, i)
+        end
+    end
+    table.insert(tpTimestamps, tick())
+end
+
 function AS.tpTo(pos, lookAt, countAsFarm)
     local hrp = AS.getHRP()
     if not hrp then return false end
+    -- NEW: rate limit
+    if countAsFarm then throttleTPRate() end
     local hum = AS.getHumanoid()
     if hum then
         hum.PlatformStand=true
@@ -725,7 +771,6 @@ task.spawn(function()
     spinner.BackgroundTransparency=1
     spinner.Parent=holder
 
-    -- Replaced recycle glyph with the supplied Xenon decal.
     local glyph = Instance.new("ImageLabel")
     glyph.Name="XenonLogo"
     glyph.Size=UDim2.new(1,0,1,0)
@@ -735,7 +780,6 @@ task.spawn(function()
     glyph.ScaleType=Enum.ScaleType.Fit
     glyph.ImageTransparency=1
     glyph.Parent=spinner
-    -- Gradient tint on the logo (red -> orange -> deep red)
     local glyphGrad = Instance.new("UIGradient")
     glyphGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0.0, THEME.GradA),
@@ -744,7 +788,7 @@ task.spawn(function()
     })
     glyphGrad.Rotation = 45
     glyphGrad.Parent = glyph
-    -- Animated glow ring behind the logo
+
     local ring = Instance.new("Frame")
     ring.Size=UDim2.new(1,20,1,20)
     ring.Position=UDim2.new(0,-10,0,-10)
@@ -764,7 +808,6 @@ task.spawn(function()
         ColorSequenceKeypoint.new(1.0, THEME.GradB),
     })
     ringGrad.Parent = ringStroke
-    -- animate ring gradient rotation
     task.spawn(function()
         while ringGrad and ringGrad.Parent do
             ringGrad.Rotation = (ringGrad.Rotation + 4) % 360
@@ -784,7 +827,6 @@ task.spawn(function()
     word.TextStrokeColor3=Color3.fromRGB(255,255,255)
     word.TextStrokeTransparency=0.4
     word.Parent=holder
-    -- Gradient tint on the wordmark
     local wordGrad = Instance.new("UIGradient")
     wordGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0.0, THEME.GradA),
@@ -798,11 +840,6 @@ task.spawn(function()
         glyph,
         TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),
         {ImageTransparency=0}
-    ):Play()
-    TweenService:Create(
-        ring,
-        TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),
-        {BackgroundTransparency=1}
     ):Play()
 
     task.wait(0.4)
@@ -1025,10 +1062,21 @@ local function tweenLeg(targetCFrame)
     local sinceLast = now - lastTweenTime
     if sinceLast < TWEEN_MIN_GAP then task.wait(TWEEN_MIN_GAP - sinceLast) end
     lastTweenTime = tick()
+
+    -- NEW: periodic rest after N legs
+    tweenLegCounter = tweenLegCounter + 1
+    if tunables.tweenPauseEvery > 0 and tweenLegCounter >= tunables.tweenPauseEvery then
+        tweenLegCounter = 0
+        task.wait(tunables.tweenPauseDur)
+    end
+
     tweenInFlight = true
+    -- NEW: use tunables.tweenSpeed instead of hardcoded TWEEN_SPEED
+    local speed = tunables.tweenSpeed
+    if speed <= 0 then speed = 14 end
     local t = TweenService:Create(
         hrp,
-        TweenInfo.new(math.max(dist/TWEEN_SPEED,0.05), Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+        TweenInfo.new(math.max(dist/speed,0.05), Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
         { CFrame = targetCFrame }
     )
     t:Play()
