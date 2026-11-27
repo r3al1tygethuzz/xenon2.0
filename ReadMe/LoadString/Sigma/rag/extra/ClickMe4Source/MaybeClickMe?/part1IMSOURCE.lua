@@ -14,7 +14,7 @@ if _G.__XenonRunning then
 end
 _G.__XenonRunning = true
 
-local PART2_URL = "https://raw.githubusercontent.com/r3al1tygethuzz/xenon2.0/refs/heads/main/ReadMe/LoadString/Sigma/rag/extra/ClickMe4Source/MaybeClickMe%3F/SourceHere/ME!.lua"
+local PART2_URL = "https://gist.githubusercontent.com/powelleshon-max/90dec1588418c13785f8a7b1c3bbcabd/raw/4e81460557a8d57dcf863e1d9b90f70f33554028/Ssss"
 
 local XENON_LOGO = "rbxassetid://112895096658850"
 local PRIVATE_SERVER_LINK = ""
@@ -38,7 +38,7 @@ local localPlayer = Players.LocalPlayer
 local FONT = Enum.Font.Code
 print("[XENON] ✓ localPlayer: " .. tostring(localPlayer and localPlayer.Name))
 
--- XENON RED THEME
+-- XENON RED THEME (with gradient stops)
 local THEME = {
     Bg=Color3.fromRGB(10,10,10),
     BgAlt=Color3.fromRGB(18,18,18),
@@ -57,6 +57,11 @@ local THEME = {
 
     Red=Color3.fromRGB(255,70,70),
     Orange=Color3.fromRGB(255,170,60),
+
+    -- Gradient stops used by UI (part2 uses these too)
+    GradA=Color3.fromRGB(255,90,70),
+    GradB=Color3.fromRGB(180,20,30),
+    GradC=Color3.fromRGB(255,40,60),
 }
 
 local state = {
@@ -693,7 +698,7 @@ task.spawn(function()
     goToIdle()
 end)
 
--- XENON SPLASH
+-- XENON SPLASH (now with gradient accents)
 task.spawn(function()
     local gui = Instance.new("ScreenGui")
     gui.Name="XenonSplash"
@@ -730,6 +735,42 @@ task.spawn(function()
     glyph.ScaleType=Enum.ScaleType.Fit
     glyph.ImageTransparency=1
     glyph.Parent=spinner
+    -- Gradient tint on the logo (red -> orange -> deep red)
+    local glyphGrad = Instance.new("UIGradient")
+    glyphGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, THEME.GradA),
+        ColorSequenceKeypoint.new(0.5, THEME.GradC),
+        ColorSequenceKeypoint.new(1.0, THEME.GradB),
+    })
+    glyphGrad.Rotation = 45
+    glyphGrad.Parent = glyph
+    -- Animated glow ring behind the logo
+    local ring = Instance.new("Frame")
+    ring.Size=UDim2.new(1,20,1,20)
+    ring.Position=UDim2.new(0,-10,0,-10)
+    ring.BackgroundTransparency=1
+    ring.Parent=spinner
+    local ringCorner = Instance.new("UICorner")
+    ringCorner.CornerRadius=UDim.new(0.5,0)
+    ringCorner.Parent=ring
+    local ringStroke = Instance.new("UIStroke")
+    ringStroke.Thickness=2
+    ringStroke.Transparency=0.3
+    ringStroke.Parent=ring
+    local ringGrad = Instance.new("UIGradient")
+    ringGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, THEME.GradA),
+        ColorSequenceKeypoint.new(0.5, THEME.GradC),
+        ColorSequenceKeypoint.new(1.0, THEME.GradB),
+    })
+    ringGrad.Parent = ringStroke
+    -- animate ring gradient rotation
+    task.spawn(function()
+        while ringGrad and ringGrad.Parent do
+            ringGrad.Rotation = (ringGrad.Rotation + 4) % 360
+            task.wait(0.03)
+        end
+    end)
 
     local word = Instance.new("TextLabel")
     word.Size=UDim2.new(1,0,0,70)
@@ -743,11 +784,25 @@ task.spawn(function()
     word.TextStrokeColor3=Color3.fromRGB(255,255,255)
     word.TextStrokeTransparency=0.4
     word.Parent=holder
+    -- Gradient tint on the wordmark
+    local wordGrad = Instance.new("UIGradient")
+    wordGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, THEME.GradA),
+        ColorSequenceKeypoint.new(0.5, THEME.GradC),
+        ColorSequenceKeypoint.new(1.0, THEME.GradB),
+    })
+    wordGrad.Rotation = 0
+    wordGrad.Parent = word
 
     TweenService:Create(
         glyph,
         TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),
         {ImageTransparency=0}
+    ):Play()
+    TweenService:Create(
+        ring,
+        TweenInfo.new(0.5,Enum.EasingStyle.Quad,Enum.EasingDirection.Out),
+        {BackgroundTransparency=1}
     ):Play()
 
     task.wait(0.4)
@@ -773,6 +828,11 @@ task.spawn(function()
         glyph,
         TweenInfo.new(0.9,Enum.EasingStyle.Linear),
         {ImageTransparency=1}
+    ):Play()
+    TweenService:Create(
+        ringStroke,
+        TweenInfo.new(0.9,Enum.EasingStyle.Linear),
+        {Transparency=1}
     ):Play()
 
     TweenService:Create(
