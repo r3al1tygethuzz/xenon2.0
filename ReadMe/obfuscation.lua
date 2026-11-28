@@ -1,9 +1,4 @@
---[[
-    Xenon Hub — Rewritten + Clean GUI
-    Original: "MADE BY GUARDIAN, XENON RUNS YOU"
-    Rewrite: dedup, bug fixes, perf, safety, UX, clean animated UI
-]]
-
+--GUARDIAN--
 local Players           = game:GetService("Players")
 local UserInputService  = game:GetService("UserInputService")
 local TweenService      = game:GetService("TweenService")
@@ -36,6 +31,8 @@ local Config = {
     SpeedBoost       = false,
     WalkSpeedValue   = 24,
     NoClip           = false,
+    SpinBot          = false,
+    SpinSpeed        = 180,   -- degrees per second
     -- Misc
     AntiAFK          = true,
     -- Coin teleport
@@ -44,6 +41,7 @@ local Config = {
     CoinKeyword      = "coin",
     CoinHeightOffset = 0,
     CoinMoveSpeed    = 20,
+    CoinDiveDepth    = 12,
 }
 
 -- Red + black palette. All lettering stays white.
@@ -87,6 +85,9 @@ local State = {
     CoinSwitchTime   = 0,
     CoinOriginalWalk = nil,
     CoinOriginalJump = nil,
+    CoinCollected    = 0,
+    CoinLastSeen     = 0,
+    CoinWasEmpty     = false,
     Unloaded         = false,
 }
 
@@ -99,8 +100,7 @@ local function track(conn)
     return conn
 end
 
--- Coin tween cleanup helpers (defined further down, used by early callbacks)
-local StopCoinTween, RestoreCoinMovement
+local RestoreCoinMovement
 
 ------------------------------------------------------------
 -- MM2 HELPERS
@@ -153,31 +153,60 @@ local function GetDroppedGun()
     return nil
 end
 
+------------------------------------------------------------
+-- COIN DETECTION
+------------------------------------------------------------
+local COIN_REJECT_NAME_PATTERNS = {
+    "spawn", "marker", "point", "location", "respawn",
+    "holder", "anchor", "origin", "trigger", "hitbox",
+    "region", "area", "zone",
+}
+
+local function IsRejectedCoinAncestor(name)
+    local lower = name:lower()
+    for _, pat in ipairs(COIN_REJECT_NAME_PATTERNS) do
+        if lower:find(pat, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function IsRealCoin(inst, keyword)
+    if not inst or not inst.Parent then return false end
+    if not inst:IsA("BasePart") then return false end
+    if inst.Transparency >= 1 then return false end
+    if inst.Size.Magnitude < 0.5 then return false end
+
+    local anc = inst.Parent
+    for _ = 1, 5 do
+        if not anc or anc == Workspace then break end
+        if IsRejectedCoinAncestor(anc.Name) then return false end
+        anc = anc.Parent
+    end
+
+    local matches = inst.Name:lower():find(keyword, 1, true) ~= nil
+    if not matches and inst.Parent then
+        matches = inst.Parent.Name:lower():find(keyword, 1, true) ~= nil
+    end
+    return matches
+end
+
 local function GetCoinVisualFrames()
     local frames = {}
+    local seen   = {}
     local keyword = tostring(Config.CoinKeyword or "coin"):lower()
     if keyword == "" then return frames end
 
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        local hit = obj.Name:lower():find(keyword, 1, true) ~= nil
-        local ancestor = obj.Parent
-        for _ = 1, 4 do
-            if not ancestor then break end
-            if ancestor.Name:lower():find(keyword, 1, true) then
-                hit = true
-                break
+        if IsRealCoin(obj, keyword) then
+            local cf = obj.CFrame
+            local key = string.format("%.1f|%.1f|%.1f",
+                cf.Position.X, cf.Position.Y, cf.Position.Z)
+            if not seen[key] then
+                seen[key] = true
+                table.insert(frames, cf)
             end
-            ancestor = ancestor.Parent
-        end
-        if hit then
-            local cf = nil
-            if obj:IsA("BasePart") then
-                cf = obj.CFrame
-            elseif obj:IsA("Model") then
-                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
-                if part then cf = part.CFrame end
-            end
-            if cf then table.insert(frames, cf) end
         end
     end
     return frames
@@ -263,6 +292,19 @@ track(LocalPlayer.CharacterAdded:Connect(function()
 end))
 
 ------------------------------------------------------------
+-- SPIN BOT
+------------------------------------------------------------
+local SpinAccum = 0
+track(RunService.RenderStepped:Connect(function(dt)
+    if State.Unloaded or not Config.SpinBot then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    SpinAccum = (SpinAccum + math.rad(Config.SpinSpeed) * dt) % (math.pi * 2)
+    root.CFrame = root.CFrame * CFrame.Angles(0, math.rad(Config.SpinSpeed) * dt, 0)
+end))
+
+------------------------------------------------------------
 -- COMBAT ENGINE
 ------------------------------------------------------------
 track(RunService.Stepped:Connect(function()
@@ -273,7 +315,6 @@ track(RunService.Stepped:Connect(function()
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not (root and humanoid) then return end
 
-    -- Speed Boost
     if Config.SpeedBoost then
         if not State.OriginalWalk then State.OriginalWalk = humanoid.WalkSpeed end
         humanoid.WalkSpeed = Config.WalkSpeedValue
@@ -282,19 +323,16 @@ track(RunService.Stepped:Connect(function()
         State.OriginalWalk = nil
     end
 
-    -- Noclip
     local wantNoclip = Config.NoClip or Config.TeleportKillAll or Config.CoinFarm
     if wantNoclip ~= State.NoclipActive then
         SetNoclip(wantNoclip)
     end
 
-    -- Auto Grab Gun
     if Config.AutoGrabGun then
         local gun = GetDroppedGun()
         if gun then root.CFrame = gun.CFrame end
     end
 
-    -- Teleport Kill All
     if Config.TeleportKillAll and GetPlayerRole(LocalPlayer) == "Murderer" then
         local knife = char:FindFirstChild("Knife")
             or (LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild("Knife"))
@@ -315,7 +353,6 @@ track(RunService.Stepped:Connect(function()
         end
     end
 
-    -- Knife Kill Aura
     if Config.KillAura and not Config.TeleportKillAll
        and GetPlayerRole(LocalPlayer) == "Murderer" then
         local now = tick()
@@ -341,7 +378,6 @@ track(RunService.Stepped:Connect(function()
         end
     end
 
-    -- Auto Shoot Murderer
     if Config.AutoShootMurderer and GetPlayerRole(LocalPlayer) == "Sheriff" then
         local murderer = GetMurderer()
         if murderer and murderer.Character then
@@ -397,14 +433,18 @@ track(LocalPlayer.Idled:Connect(function()
 end))
 
 ------------------------------------------------------------
--- COIN TWEEN (TweenService movement, noclip active while farming)
+-- COIN TWEEN (multi-leg: down → across → up)
 ------------------------------------------------------------
 local CoinTween = nil
 local CoinTweenActive = false
 local CoinProxy = nil
 local CoinApplyConn = nil
+local CoinLegSeq = nil
+local CoinLegIdx = 0
 
-StopCoinTween = function()
+local FORCE_RESET_CF = CFrame.new(13.15, 345.94, -112.90)
+
+local function StopCoinTween()
     CoinTweenActive = false
     if CoinTween then
         local tween = CoinTween
@@ -423,8 +463,14 @@ StopCoinTween = function()
     end
 end
 
-RestoreCoinMovement = function()
+local function ResetCoinPath()
     StopCoinTween()
+    CoinLegSeq = nil
+    CoinLegIdx = 0
+end
+
+RestoreCoinMovement = function()
+    ResetCoinPath()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
@@ -435,51 +481,30 @@ RestoreCoinMovement = function()
     State.CoinOriginalJump = nil
     State.CoinTargetIndex = 0
     State.CoinSwitchTime = 0
+    State.CoinWasEmpty = false
 end
 
-track(RunService.Heartbeat:Connect(function()
-    if State.Unloaded or not Config.CoinFarm then return end
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local hum  = char and char:FindFirstChildOfClass("Humanoid")
-    if not (root and hum) then return end
+local function BuildCoinPath(startCF, coinCF)
+    local diveDepth = math.max(Config.CoinDiveDepth, 6)
+    local diveCF = startCF + Vector3.new(0, -diveDepth, 0)
+    local underCoinCF = CFrame.new(
+        coinCF.Position.X,
+        diveCF.Position.Y,
+        coinCF.Position.Z
+    ) * (startCF - startCF.Position)
+    local coinFinalCF = coinCF + Vector3.new(0, Config.CoinHeightOffset, 0)
+    return { diveCF, underCoinCF, coinFinalCF }
+end
 
-    -- stop the player from fighting the scripted movement
-    if not State.CoinOriginalWalk then
-        State.CoinOriginalWalk = hum.WalkSpeed
-        State.CoinOriginalJump = hum.JumpPower
-    end
-    hum.WalkSpeed = 0
-    hum.JumpPower = 0
+local function RunCoinLeg(root, targetCF, onDone)
+    local startCF = root.CFrame
+    local distance = (targetCF.Position - startCF.Position).Magnitude
+    local duration = math.clamp(distance / math.max(Config.CoinMoveSpeed, 1), 0.08, 2.2)
 
-    -- an in-flight tween already owns the root
-    if CoinTweenActive then return end
+    StopCoinTween()
 
-    local now = tick()
-    if now - State.CoinFramesRefresh > 0.5 then
-        State.CoinFrames = GetCoinVisualFrames()
-        State.CoinFramesRefresh = now
-    end
-    local frames = State.CoinFrames
-    local frameCount = #frames
-    if frameCount == 0 then return end
-
-    if State.CoinTargetIndex < 1 or State.CoinTargetIndex > frameCount then
-        State.CoinTargetIndex = 1
-        State.CoinSwitchTime = now
-    end
-    if now - State.CoinSwitchTime < Config.CoinTeleportDelay then return end
-
-    -- Combat engine enables noclip whenever CoinFarm is on, so the tween can
-    -- travel through walls to reach the coin.
-    local targetCF = frames[State.CoinTargetIndex] + Vector3.new(0, Config.CoinHeightOffset, 0)
-    local distance = (targetCF.Position - root.Position).Magnitude
-    local duration = math.clamp(distance / math.max(Config.CoinMoveSpeed, 1), 0.1, 3)
-
-    -- TweenService drives a proxy; Heartbeat copies it onto the root so the
-    -- humanoid's physics cannot overwrite the interpolation.
     CoinProxy = Instance.new("CFrameValue")
-    CoinProxy.Value = root.CFrame
+    CoinProxy.Value = startCF
 
     CoinApplyConn = RunService.Heartbeat:Connect(function()
         if not CoinProxy or not root.Parent then return end
@@ -495,18 +520,106 @@ track(RunService.Heartbeat:Connect(function()
     CoinTween = thisTween
     CoinTweenActive = true
 
+    local finished = false
     thisTween.Completed:Connect(function()
-        if State.Unloaded or not Config.CoinFarm then return end
-        if CoinTween ~= thisTween then return end
-        StopCoinTween()
-        local current = State.CoinFrames
-        if #current > 0 then
-            State.CoinTargetIndex = State.CoinTargetIndex % #current + 1
+        if finished then return end
+        finished = true
+        if State.Unloaded or not Config.CoinFarm then
+            StopCoinTween()
+            return
         end
-        State.CoinSwitchTime = tick()
+        if CoinTween ~= thisTween then return end
+        CoinTweenActive = false
+        CoinTween = nil
+        onDone(true)
     end)
 
     thisTween:Play()
+end
+
+local function ForceResetCharacter(root)
+    root.CFrame = FORCE_RESET_CF
+    task.wait(0.2)
+    local hum = root.Parent and root.Parent:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum.Health = 0 end)
+    end
+end
+
+track(RunService.Heartbeat:Connect(function()
+    if State.Unloaded or not Config.CoinFarm then return end
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+    if not (root and hum) then return end
+
+    if not State.CoinOriginalWalk then
+        State.CoinOriginalWalk = hum.WalkSpeed
+        State.CoinOriginalJump = hum.JumpPower
+    end
+    hum.WalkSpeed = 0
+    hum.JumpPower = 0
+
+    if CoinTweenActive then return end
+
+    local now = tick()
+    if now - State.CoinFramesRefresh > 0.35 then
+        State.CoinFrames = GetCoinVisualFrames()
+        State.CoinFramesRefresh = now
+    end
+    local frames = State.CoinFrames
+    local frameCount = #frames
+
+    if frameCount == 0 then
+        if State.CoinCollected > 0 and not State.CoinWasEmpty then
+            ForceResetCharacter(root)
+            State.CoinCollected = 0
+            State.CoinTargetIndex = 1
+            State.CoinSwitchTime = tick()
+            ResetCoinPath()
+            State.CoinWasEmpty = true
+        end
+        return
+    end
+    State.CoinWasEmpty = false
+
+    if State.CoinTargetIndex > frameCount then
+        ForceResetCharacter(root)
+        State.CoinCollected = 0
+        State.CoinTargetIndex = 1
+        State.CoinSwitchTime = tick()
+        ResetCoinPath()
+        return
+    end
+
+    if not CoinLegSeq then
+        if State.CoinTargetIndex < 1 then
+            State.CoinTargetIndex = 1
+            State.CoinSwitchTime = now
+        end
+        if now - State.CoinSwitchTime < Config.CoinTeleportDelay then return end
+        local coinCF = frames[State.CoinTargetIndex]
+        CoinLegSeq = BuildCoinPath(root.CFrame, coinCF)
+        CoinLegIdx = 1
+    end
+
+    local legTarget = CoinLegSeq[CoinLegIdx]
+    if not legTarget then
+        ResetCoinPath()
+        State.CoinCollected = State.CoinCollected + 1
+        State.CoinLastSeen  = tick()
+        local current = State.CoinFrames
+        if #current > 0 then
+            State.CoinTargetIndex = State.CoinTargetIndex + 1
+        end
+        State.CoinSwitchTime = tick()
+        return
+    end
+
+    RunCoinLeg(root, legTarget, function(ok)
+        if not ok then return end
+        CoinLegIdx = CoinLegIdx + 1
+    end)
 end))
 
 ------------------------------------------------------------
@@ -596,7 +709,6 @@ MainStroke.Thickness = 1
 MainStroke.Transparency = 0.25
 MainStroke.Parent = Main
 
--- Small helpers used by every control
 local function Corner(parent, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius)
@@ -737,7 +849,7 @@ local Subtitle = Instance.new("TextLabel")
 Subtitle.Size = UDim2.new(0, 230, 0, 14)
 Subtitle.Position = UDim2.fromOffset(55, 28)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "CONTROL PANEL  //  v2.0"
+Subtitle.Text = "CONTROL PANEL  //  v2.3"
 Subtitle.TextColor3 = Theme.TextMuted
 Subtitle.TextSize = 9
 Subtitle.Font = Enum.Font.GothamMedium
@@ -1050,6 +1162,7 @@ local MurdererTab = CreateTab("Murderer")
 local SheriffTab  = CreateTab("Sheriff")
 local ESPTab      = CreateTab("Visuals / ESP")
 local MovementTab = CreateTab("Movement")
+local CoinTab     = CreateTab("Coin Farm")
 
 SelectTab(1)
 
@@ -1228,6 +1341,121 @@ local function AddSlider(Parent, Name, Min, Max, Default, Callback)
 end
 
 ------------------------------------------------------------
+-- LIVE COUNTER (Coin Farm tab)
+------------------------------------------------------------
+local CounterRow = Instance.new("Frame")
+CounterRow.Size = UDim2.new(1, -4, 0, 70)
+CounterRow.BackgroundColor3 = Theme.Panel
+CounterRow.BorderSizePixel = 0
+CounterRow.ZIndex = 2
+CounterRow.Parent = CoinTab
+Corner(CounterRow, 10)
+Stroke(CounterRow, Theme.Stroke, 1, 0.4)
+
+local CounterTitle = Instance.new("TextLabel")
+CounterTitle.Size = UDim2.new(1, -28, 0, 16)
+CounterTitle.Position = UDim2.fromOffset(14, 6)
+CounterTitle.BackgroundTransparency = 1
+CounterTitle.Text = "LIVE COUNTER"
+CounterTitle.TextColor3 = Theme.TextMuted
+CounterTitle.TextSize = 9
+CounterTitle.Font = Enum.Font.GothamBold
+CounterTitle.TextXAlignment = Enum.TextXAlignment.Left
+CounterTitle.ZIndex = 3
+CounterTitle.Parent = CounterRow
+
+local CounterGrid = Instance.new("Frame")
+CounterGrid.Size = UDim2.new(1, -28, 0, 38)
+CounterGrid.Position = UDim2.fromOffset(14, 24)
+CounterGrid.BackgroundTransparency = 1
+CounterGrid.ZIndex = 3
+CounterGrid.Parent = CounterRow
+
+local CounterGridLayout = Instance.new("UIListLayout")
+CounterGridLayout.FillDirection = Enum.FillDirection.Horizontal
+CounterGridLayout.Padding = UDim.new(0, 8)
+CounterGridLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+CounterGridLayout.Parent = CounterGrid
+
+local function MakeCounterCell(labelText, initial)
+    local cell = Instance.new("Frame")
+    cell.Size = UDim2.new(0.5, -4, 1, 0)
+    cell.BackgroundColor3 = Theme.Track
+    cell.BorderSizePixel = 0
+    cell.ZIndex = 4
+    cell.Parent = CounterGrid
+    Corner(cell, 7)
+    Stroke(cell, Theme.Accent, 1, 0.55)
+
+    local cap = Instance.new("TextLabel")
+    cap.Size = UDim2.new(1, -10, 0, 12)
+    cap.Position = UDim2.fromOffset(6, 3)
+    cap.BackgroundTransparency = 1
+    cap.Text = labelText
+    cap.TextColor3 = Theme.TextMuted
+    cap.TextSize = 8
+    cap.Font = Enum.Font.GothamBold
+    cap.TextXAlignment = Enum.TextXAlignment.Left
+    cap.ZIndex = 5
+    cap.Parent = cell
+
+    local val = Instance.new("TextLabel")
+    val.Size = UDim2.new(1, -10, 0, 18)
+    val.Position = UDim2.fromOffset(6, 15)
+    val.BackgroundTransparency = 1
+    val.Text = tostring(initial)
+    val.TextColor3 = Theme.Text
+    val.TextSize = 15
+    val.Font = Enum.Font.GothamBlack
+    val.TextXAlignment = Enum.TextXAlignment.Left
+    val.ZIndex = 5
+    val.Parent = cell
+
+    return val
+end
+
+local TrackedValue   = MakeCounterCell("TRACKED", 0)
+local CollectedValue = MakeCounterCell("COLLECTED", 0)
+
+local CoinStatus = Instance.new("TextLabel")
+CoinStatus.Size = UDim2.new(1, -28, 0, 14)
+CoinStatus.Position = UDim2.fromOffset(14, 52)
+CoinStatus.BackgroundTransparency = 1
+CoinStatus.Text = "idle"
+CoinStatus.TextColor3 = Theme.TextMuted
+CoinStatus.TextSize = 9
+CoinStatus.Font = Enum.Font.GothamMedium
+CoinStatus.TextXAlignment = Enum.TextXAlignment.Left
+CoinStatus.ZIndex = 3
+CoinStatus.Parent = CounterRow
+
+local lastTracked, lastCollected = -1, -1
+task.spawn(function()
+    while not State.Unloaded do
+        local tracked = #State.CoinFrames
+        local collected = State.CoinCollected
+        if tracked ~= lastTracked then
+            lastTracked = tracked
+            TrackedValue.Text = tostring(tracked)
+        end
+        if collected ~= lastCollected then
+            lastCollected = collected
+            CollectedValue.Text = tostring(collected)
+        end
+        if Config.CoinFarm then
+            if tracked > 0 then
+                CoinStatus.Text = string.format("farming  •  target %d/%d", State.CoinTargetIndex, tracked)
+            else
+                CoinStatus.Text = "farming  •  no coins detected"
+            end
+        else
+            CoinStatus.Text = "idle"
+        end
+        task.wait(0.25)
+    end
+end)
+
+------------------------------------------------------------
 -- POPULATE CONTROLS
 ------------------------------------------------------------
 AddToggle(MurdererTab, "Teleport Kill All", Config.TeleportKillAll, function(v) Config.TeleportKillAll = v end)
@@ -1245,13 +1473,23 @@ AddToggle(ESPTab, "Dropped Gun ESP", Config.GunESP, function(v) Config.GunESP = 
 
 AddToggle(MovementTab, "Speed Boost", Config.SpeedBoost, function(v) Config.SpeedBoost = v end)
 AddSlider(MovementTab, "Walk Speed", 16, 60, Config.WalkSpeedValue, function(v) Config.WalkSpeedValue = v end)
+AddSlider(MovementTab, "Move Speed (Tween)", 5, 100, Config.CoinMoveSpeed, function(v) Config.CoinMoveSpeed = v end)
 AddToggle(MovementTab, "Noclip", Config.NoClip, function(v) Config.NoClip = v end)
-AddToggle(MovementTab, "Coin Teleport (Loop All)", Config.CoinFarm, function(v)
+AddToggle(MovementTab, "Spin Bot", Config.SpinBot, function(v) Config.SpinBot = v end)
+AddSlider(MovementTab, "Spin Speed (°/s)", 30, 1080, Config.SpinSpeed, function(v) Config.SpinSpeed = v end)
+
+AddToggle(CoinTab, "Coin Teleport (Loop All)", Config.CoinFarm, function(v)
     Config.CoinFarm = v
-    if not v then RestoreCoinMovement() end
+    if v then
+        State.CoinCollected = 0
+        State.CoinLastSeen = tick()
+    else
+        RestoreCoinMovement()
+    end
 end)
-AddSlider(MovementTab, "Coin TP Delay (x0.1s)", 2, 30, Config.CoinTeleportDelay * 10, function(v) Config.CoinTeleportDelay = v / 10 end)
-AddSlider(MovementTab, "Coin Tween Speed", 5, 100, Config.CoinMoveSpeed, function(v) Config.CoinMoveSpeed = v end)
+AddSlider(CoinTab, "Coin TP Delay (x0.1s)", 2, 30, Config.CoinTeleportDelay * 10, function(v) Config.CoinTeleportDelay = v / 10 end)
+AddSlider(CoinTab, "Coin Tween Speed", 5, 100, Config.CoinMoveSpeed, function(v) Config.CoinMoveSpeed = v end)
+AddSlider(CoinTab, "Coin Dive Depth", 6, 40, Config.CoinDiveDepth, function(v) Config.CoinDiveDepth = v end)
 
 ------------------------------------------------------------
 -- DRAGGING & KEYBIND
@@ -1270,7 +1508,6 @@ track(UserInputService.InputChanged:Connect(function(input)
     if Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
         local delta = input.Position - DragStart
         local vp = Camera.ViewportSize
-        -- keep the title bar reachable so the GUI can never be lost off-screen
         local newX = math.clamp(StartPos.X.Offset + delta.X, -MAIN_W + 120, vp.X - 120)
         local newY = math.clamp(StartPos.Y.Offset + delta.Y, 0, vp.Y - COLLAPSED_H)
         Main.Position = UDim2.new(StartPos.X.Scale, newX, StartPos.Y.Scale, newY)
