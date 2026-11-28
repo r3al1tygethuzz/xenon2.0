@@ -641,6 +641,10 @@ local function verifyKey(inputKey)
 
     local data = loadKeys(true)
     if not data then
+        -- Retry with plain URL.
+        data = loadKeys(false)
+    end
+    if not data then
         return false, "Could not load key server."
     end
 
