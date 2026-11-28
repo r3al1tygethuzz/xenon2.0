@@ -714,7 +714,7 @@ local GUNS = {
     { name = "Type 100",        price = 2000 },
     { name = "M16",             price = 3000 },
     { name = "Sniper",          price = 4000 },
-    { name = "Tatical Shotgun", price = 5000 },
+    { name = "Tactical Shotgun", price = 5000 },
     { name = "Thompson",        price = 7500 },
     { name = "Blaster",         price = 8500 },
     { name = "Machine Gun",     price = 9500 },
@@ -1219,7 +1219,7 @@ local ModeSec = ModeTab:Section("Farm Mode")
 
 ModeSec:Dropdown({
     Label = "Farm Mode",
-    Items = { "Air", "TP", "Ground" },
+    Items = { "Air", "TP" },
     Default = "Air",
     Callback = function(v)
         Mode = v
@@ -1241,22 +1241,22 @@ AirSec:Slider({
 
 local GroundSec = TuneTab:Section("Ground")
 GroundSec:Slider({
-    Label = "Back-off distance (studs)",
+    Label = "BE BACK SOON",
     Min = 4, Max = 40, Default = GROUND_NEAR_DIST,
     Callback = function(v) GROUND_NEAR_DIST = v; _G.__XenonGroundNear = v end,
 })
 GroundSec:Slider({
-    Label = "Approach distance (studs)",
+    Label = "BE BACK SOON",
     Min = 10, Max = 80, Default = GROUND_FAR_DIST,
     Callback = function(v) GROUND_FAR_DIST = v; _G.__XenonGroundFar = v end,
 })
 GroundSec:Slider({
-    Label = "Repath interval (s)",
+    Label = "BE BACK SOON",
     Min = 0.05, Max = 1, Default = GROUND_STEP,
     Callback = function(v) GROUND_STEP = v end,
 })
 GroundSec:Slider({
-    Label = "Sidestep distance (studs)",
+    Label = "BE BACK SOON",
     Min = 2, Max = 20, Default = GROUND_SIDESTEP,
     Callback = function(v) GROUND_SIDESTEP = v end,
 })
