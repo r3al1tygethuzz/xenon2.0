@@ -644,69 +644,51 @@ local function verifyKey(inputKey)
         return false, "Could not load key server."
     end
 
-    local _, globalEntry = lookupKey(data.global, inputKey)
+    -- Case-insensitive lookup.
+    local function findEntry(tbl, key)
+        if type(tbl) ~= "table" then return nil end
+        if tbl[key] ~= nil then return tbl[key] end
+        local wanted = key:upper()
+        for name, entry in pairs(tbl) do
+            if tostring(name):upper() == wanted then
+                return entry
+            end
+        end
+        return nil
+    end
+
+    local globalEntry = findEntry(data.global, inputKey)
 
     if globalEntry then
         if isExpired(globalEntry) then
-            sendLog(
-                "⏰ Key Expired",
-                "A global key has expired.",
-                15105570,
-                {
-                    { name = "Username", value = username, inline = true },
-                    { name = "User ID", value = userId, inline = true },
-                    { name = "HWID", value = "```" .. clientId .. "```", inline = false },
-                    { name = "Key Type", value = "Global", inline = true }
-                }
-            )
             return false, "This key has expired."
         end
-
-        sendLog(
-            "✅ Key Verified",
-            "Global key accepted.",
-            5763719,
-            {
-                { name = "Username", value = username, inline = true },
-                { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
-                { name = "Key", value = "||" .. inputKey .. "||", inline = false },
-                { name = "Type", value = "Global (any device)", inline = true }
-            }
-        )
-
+        sendLog("✅ Key Verified", "Global key accepted.", 5763719, {
+            { name = "Username", value = username, inline = true },
+            { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+            { name = "Key", value = "||" .. inputKey .. "||", inline = false },
+            { name = "Type", value = "Global (any device)", inline = true }
+        })
         return true, "Key verified successfully!"
     end
 
-    local _, keyEntry = lookupKey(data.keys, inputKey)
+    local keyEntry = findEntry(data.keys, inputKey)
 
     if not keyEntry then
-        sendLog(
-            "❌ Invalid Key",
-            "A key that does not exist was entered.",
-            15158332,
-            {
-                { name = "Username", value = username, inline = true },
-                { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
-                { name = "Entered Key", value = "||" .. inputKey .. "||", inline = false }
-            }
-        )
+        sendLog("❌ Invalid Key", "A key that does not exist was entered.", 15158332, {
+            { name = "Username", value = username, inline = true },
+            { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+            { name = "Entered Key", value = "||" .. inputKey .. "||", inline = false }
+        })
         return false, "Invalid key."
     end
 
     if isExpired(keyEntry) then
-        sendLog(
-            "⏰ Key Expired",
-            "An expired HWID key was entered.",
-            15105570,
-            {
-                { name = "Username", value = username, inline = true },
-                { name = "User ID", value = userId, inline = true },
-                { name = "HWID", value = "```" .. clientId .. "```", inline = false },
-                { name = "Key Type", value = "HWID", inline = true }
-            }
-        )
+        sendLog("⏰ Key Expired", "An expired HWID key was entered.", 15105570, {
+            { name = "Username", value = username, inline = true },
+            { name = "HWID", value = "```" .. clientId .. "```", inline = false },
+            { name = "Key Type", value = "HWID", inline = true }
+        })
         return false, "This key has expired."
     end
 
@@ -714,44 +696,7 @@ local function verifyKey(inputKey)
 
     if boundHwid ~= nil and tostring(boundHwid) ~= "" then
         if tostring(boundHwid) ~= tostring(clientId) then
-            -- GitHub raw CDN can serve stale data; retry a few times.
-            local retries = 0
-            while retries < 3 do
-                retries = retries + 1
-                task.wait(4)
-                local freshData = loadKeys(true)
-                if freshData then
-                    local _, freshEntry = lookupKey(freshData.keys, inputKey)
-                    if freshEntry then
-                        local freshHwid = freshEntry.hwid
-                        if freshHwid == nil or tostring(freshHwid) == "" then
-                            boundHwid = nil
-                            break
-                        elseif tostring(freshHwid) == tostring(clientId) then
-                            boundHwid = freshHwid
-                            break
-                        else
-                            boundHwid = freshHwid
-                        end
-                    end
-                end
-            end
-
-            if boundHwid ~= nil and tostring(boundHwid) ~= "" and tostring(boundHwid) ~= tostring(clientId) then
-                sendLog(
-                    "🚨 KEY LOCKED",
-                    "A key bound to another device was used.",
-                    16711680,
-                    {
-                        { name = "Username", value = username, inline = true },
-                        { name = "User ID", value = userId, inline = true },
-                        { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
-                        { name = "Bound HWID", value = "```" .. tostring(boundHwid) .. "```", inline = false },
-                        { name = "Key", value = "||" .. inputKey .. "||", inline = false }
-                    }
-                )
-                return false, "This key is locked to another device."
-            end
+            return false, "This key is locked to another device."
         end
     else
         -- First use: send a claim so the bot binds this HWID to the key.
@@ -765,54 +710,16 @@ local function verifyKey(inputKey)
             allowed_mentions = { parse = {} },
         })
 
-        -- Poll briefly for confirmation (best-effort).
-        local deadline = currentTime() + 15
-        local bound = false
-        local lockedToOther = false
-        local otherHwid = nil
-        while currentTime() < deadline do
-            task.wait(3)
-            local freshData = loadKeys(true)
-            if freshData then
-                local _, freshEntry = lookupKey(freshData.keys, inputKey)
-                if freshEntry then
-                    local fh = freshEntry.hwid
-                    if fh ~= nil and tostring(fh) ~= "" then
-                        if tostring(fh) == tostring(clientId) then
-                            bound = true
-                        else
-                            lockedToOther = true
-                            otherHwid = tostring(fh)
-                        end
-                        break
-                    end
-                end
-            end
-        end
+        -- First use: send claim and grant access immediately.
+        -- The bot will bind the HWID asynchronously.
+        local claimedHash = keyHash(inputKey)
+        local nonce = tostring(currentTime()) .. "-" .. tostring(math.random(100000, 999999))
 
-        if lockedToOther then
-            sendLog(
-                "🚨 KEY LOCKED",
-                "A key bound to another device was used.",
-                16711680,
-                {
-                    { name = "Username", value = username, inline = true },
-                    { name = "User ID", value = userId, inline = true },
-                    { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
-                    { name = "Bound HWID", value = "```" .. otherHwid .. "```", inline = false },
-                    { name = "Key", value = "||" .. inputKey .. "||", inline = false }
-                }
-            )
-            return false, "This key is locked to another device."
-        end
-
-        -- If still unbound after polling, grant access anyway (best-effort).
-        -- The claim was sent; the bot will bind it asynchronously.
-        -- A subsequent use on a different device will be caught by the
-        -- server-side staff-key safety check.
-        if not bound then
-            warn("[KeySystem] Bind not confirmed in time; granting access anyway.")
-        end
+        postWebhook({
+            content = CLAIM_PREFIX .. claimedHash .. "|" .. clientId .. "|" .. nonce,
+            username = "Nyra Key Claim",
+            allowed_mentions = { parse = {} },
+        })
 
         sendLog(
             "🔒 Key Claim Sent",
