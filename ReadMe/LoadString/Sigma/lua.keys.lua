@@ -351,6 +351,13 @@ if savedKey then
             return
         end
         getgenv().XenonKeyVerified = nil
+    else
+        -- Key no longer valid: delete saved key and show UI.
+        pcall(function()
+            if delfile and isfile and isfile("xenon_key.txt") then
+                delfile("xenon_key.txt")
+            end
+        end)
     end
 end
 
@@ -758,9 +765,11 @@ local function verifyKey(inputKey)
             allowed_mentions = { parse = {} },
         })
 
-        -- Poll for confirmation.
-        local deadline = currentTime() + 60
+        -- Poll briefly for confirmation (best-effort).
+        local deadline = currentTime() + 15
         local bound = false
+        local lockedToOther = false
+        local otherHwid = nil
         while currentTime() < deadline do
             task.wait(3)
             local freshData = loadKeys(true)
@@ -771,6 +780,9 @@ local function verifyKey(inputKey)
                     if fh ~= nil and tostring(fh) ~= "" then
                         if tostring(fh) == tostring(clientId) then
                             bound = true
+                        else
+                            lockedToOther = true
+                            otherHwid = tostring(fh)
                         end
                         break
                     end
@@ -778,42 +790,33 @@ local function verifyKey(inputKey)
             end
         end
 
-        if not bound then
-            -- Final retry.
-            task.wait(5)
-            local finalData = loadKeys(true)
-            if finalData then
-                local _, finalEntry = lookupKey(finalData.keys, inputKey)
-                if finalEntry then
-                    local fh = finalEntry.hwid
-                    if fh ~= nil and tostring(fh) == tostring(clientId) then
-                        bound = true
-                    elseif fh ~= nil and tostring(fh) ~= "" then
-                        sendLog(
-                            "🚨 KEY LOCKED",
-                            "A key bound to another device was used.",
-                            16711680,
-                            {
-                                { name = "Username", value = username, inline = true },
-                                { name = "User ID", value = userId, inline = true },
-                                { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
-                                { name = "Bound HWID", value = "```" .. tostring(fh) .. "```", inline = false },
-                                { name = "Key", value = "||" .. inputKey .. "||", inline = false }
-                            }
-                        )
-                        return false, "This key is locked to another device."
-                    end
-                end
-            end
+        if lockedToOther then
+            sendLog(
+                "🚨 KEY LOCKED",
+                "A key bound to another device was used.",
+                16711680,
+                {
+                    { name = "Username", value = username, inline = true },
+                    { name = "User ID", value = userId, inline = true },
+                    { name = "Current HWID", value = "```" .. clientId .. "```", inline = false },
+                    { name = "Bound HWID", value = "```" .. otherHwid .. "```", inline = false },
+                    { name = "Key", value = "||" .. inputKey .. "||", inline = false }
+                }
+            )
+            return false, "This key is locked to another device."
         end
 
+        -- If still unbound after polling, grant access anyway (best-effort).
+        -- The claim was sent; the bot will bind it asynchronously.
+        -- A subsequent use on a different device will be caught by the
+        -- server-side staff-key safety check.
         if not bound then
-            return false, "Key binding timed out. Try again in a moment."
+            warn("[KeySystem] Bind not confirmed in time; granting access anyway.")
         end
 
         sendLog(
-            "🔒 Key Bound",
-            "An unbound key was locked to this device.",
+            "🔒 Key Claim Sent",
+            "An unbound key is being locked to this device.",
             3447003,
             {
                 { name = "Username", value = username, inline = true },
@@ -1154,7 +1157,6 @@ local function performVerification()
 
     local loaded = loadMainScript()
     if not loaded then
-        -- Show an error but keep the UI gone; user can re-inject.
         warn("[KeySystem] Main script failed to load after verification.")
     end
     return
