@@ -6,7 +6,7 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local HUB_NAME = "Xenon"
 local HUB_SUBTITLE = "A generalized Zombie attack farm"
 
-local SecretHub = loadstring(game:HttpGet("https://gist.githubusercontent.com/powelleshon-max/355cfd6b683dc04a1a6f41d74646f9b4/raw/989b58d4eb2b7d3f57c3c55d1569536209e9d85f/Asdsadas"))()
+local SecretHub = loadstring(game:HttpGet("https://gist.githubusercontent.com/powelleshon-max/5a56a3708d7266b92f43c309481689ca/raw/73e45eaef43571862816337e829ea931a1c45af8/Adsadada"))()
 
 -- THEME — red / black / grey
 SecretHub.Config.Title    = HUB_NAME
