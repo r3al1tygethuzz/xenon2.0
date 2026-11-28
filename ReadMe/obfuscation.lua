@@ -40,8 +40,8 @@ local Config = {
     CoinTeleportDelay = 0.4,
     CoinKeyword      = "coin",
     CoinHeightOffset = 0,
-    CoinMoveSpeed    = 20,
-    CoinDiveDepth    = 12,
+    CoinMoveSpeed    = 15,
+    CoinDiveDepth    = 9,
 }
 
 -- Red + black palette. All lettering stays white.
