@@ -39,20 +39,22 @@ local FLY_SMOOTHING = 8 -- higher = snappier, lower = floatier
 local flyVelocity = Vector3.new(0, 0, 0)
 
 local theme = {
-	bg = Color3.fromRGB(17, 19, 27),
-	card = Color3.fromRGB(29, 33, 45),
-	cardAlt = Color3.fromRGB(37, 42, 58),
-	cardHover = Color3.fromRGB(48, 55, 76),
-	stroke = Color3.fromRGB(60, 69, 92),
-	text = Color3.fromRGB(238, 241, 248),
-	muted = Color3.fromRGB(151, 160, 180),
-	accent = Color3.fromRGB(96, 130, 255),
-	accentAlt = Color3.fromRGB(130, 100, 255),
-	green = Color3.fromRGB(64, 190, 110),
-	red = Color3.fromRGB(210, 78, 78),
-	amber = Color3.fromRGB(255, 183, 94),
-	tabActive = Color3.fromRGB(84, 118, 222),
-	tabInactive = Color3.fromRGB(36, 41, 56),
+	-- Red / black theme. Note: "green" is the ON state color and "red" is the
+	-- OFF state color in the code below, so they are remapped here.
+	bg = Color3.fromRGB(10, 8, 9),           -- near-black, faint red tint
+	card = Color3.fromRGB(28, 16, 18),       -- dark red-black
+	cardAlt = Color3.fromRGB(42, 22, 25),    -- slightly lighter red-black
+	cardHover = Color3.fromRGB(70, 30, 36),  -- red hover
+	stroke = Color3.fromRGB(150, 35, 45),    -- red border
+	text = Color3.fromRGB(255, 255, 255),    -- white letters
+	muted = Color3.fromRGB(230, 215, 218),   -- soft white
+	accent = Color3.fromRGB(220, 38, 55),    -- bright red
+	accentAlt = Color3.fromRGB(175, 25, 40), -- deep red
+	green = Color3.fromRGB(220, 38, 55),     -- ON = bright red
+	red = Color3.fromRGB(40, 20, 23),        -- OFF = near-black
+	amber = Color3.fromRGB(255, 220, 220),   -- near-white warning text
+	tabActive = Color3.fromRGB(200, 30, 45), -- active tab red
+	tabInactive = Color3.fromRGB(30, 16, 18), -- inactive tab dark
 }
 
 local activeTab = "Main"
@@ -533,7 +535,7 @@ make("TextLabel", {
 
 make("TextLabel", {
 	Size = UDim2.new(1, 0, 0, 34),
-	BackgroundColor3 = Color3.fromRGB(53, 42, 32),
+	BackgroundColor3 = Color3.fromRGB(70, 18, 24),
 	BorderSizePixel = 0,
 	Text = "You cannot TP to these wins unless you have the map unlocked.",
 	TextColor3 = theme.amber,
